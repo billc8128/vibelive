@@ -2,7 +2,16 @@ import { NextRequest } from "next/server";
 import { RoomServiceClient } from "livekit-server-sdk";
 import { createClient } from "@/lib/supabase/server";
 
-// GET: 获取活跃直播，或查询用户历史直播
+// ────────────────────────────────────────────────────────────────
+// /api/streams
+// 重构: 直播会话现在和 channels 表强绑定。
+//   - room_name 始终等于 channel.slug, 是 LiveKit room name + 观看页 URL 段
+//   - POST 不再接受任意 room_name; 取当前用户的 channel.slug
+//   - DELETE 时把直播数据归档到 stream_history (用于离线频道页摘要)
+//   - 大部分项目信息编辑请走 /api/channels (PATCH 会自动同步到 live_streams)
+// ────────────────────────────────────────────────────────────────
+
+// GET: 默认返回所有活跃直播; ?history=1 返回当前用户历史 (兼容旧用法)
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   if (!supabase) {
@@ -11,12 +20,14 @@ export async function GET(request: NextRequest) {
 
   const history = request.nextUrl.searchParams.get("history");
 
-  // 查询当前登录用户的历史直播（需要鉴权）
   if (history) {
-    const { data: { user } } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) return Response.json({ streams: [] });
+    // 历史查 stream_history (保留 live_streams 当前会话语义)
     const { data, error } = await supabase
-      .from("live_streams")
+      .from("stream_history")
       .select("*")
       .eq("user_id", user.id)
       .order("started_at", { ascending: false })
@@ -26,7 +37,6 @@ export async function GET(request: NextRequest) {
     return Response.json({ streams: data ?? [] });
   }
 
-  // 默认：获取所有活跃直播
   const { data, error } = await supabase
     .from("live_streams")
     .select("*")
@@ -40,59 +50,59 @@ export async function GET(request: NextRequest) {
   return Response.json({ streams: data ?? [] });
 }
 
-// POST: 注册新直播
-export async function POST(request: NextRequest) {
+// POST: 开始新的直播会话
+//   - 必须先有 channel
+//   - 不接受客户端 room_name (统一使用 channel.slug)
+//   - 复制 channel 的快照字段到 live_streams 行 (title/封面/项目信息等)
+export async function POST() {
   const supabase = await createClient();
   if (!supabase) {
     return Response.json({ error: "服务未配置" }, { status: 500 });
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) {
     return Response.json({ error: "未登录" }, { status: 401 });
   }
 
-  let body: { room_name?: string; title?: string; coding_tool?: string; thumbnail_url?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return Response.json({ error: "请求格式错误" }, { status: 400 });
-  }
-  const { room_name, title, coding_tool, thumbnail_url } = body;
-
-  if (!room_name || room_name.length > 60) {
-    return Response.json({ error: "room_name 为必填项" }, { status: 400 });
-  }
-
-  // Check if this room_name is already live by another user
-  const { data: existing } = await supabase
-    .from("live_streams")
-    .select("user_id")
-    .eq("room_name", room_name)
-    .eq("status", "live")
+  // 找到当前用户的频道
+  const { data: channel } = await supabase
+    .from("channels")
+    .select("*")
+    .eq("user_id", user.id)
     .maybeSingle();
 
-  if (existing && existing.user_id !== user.id) {
-    return Response.json({ error: "该房间名已被其他用户占用" }, { status: 409 });
+  if (!channel) {
+    return Response.json(
+      { error: "请先设置频道 ID" },
+      { status: 400 }
+    );
   }
 
-  // End any existing live stream by this user (one live stream per user)
-  await supabase
-    .from("live_streams")
-    .update({ status: "ended", ended_at: new Date().toISOString() })
-    .eq("user_id", user.id)
-    .eq("status", "live");
+  // 同一频道之前的活跃会话(异常残留)归档掉
+  await endActiveStreams(supabase, channel.id, user.id);
 
-  // Insert new stream record
+  const streamerName =
+    user.user_metadata?.full_name ||
+    user.user_metadata?.name ||
+    user.email?.split("@")[0] ||
+    "匿名";
+
   const { data, error } = await supabase
     .from("live_streams")
     .insert({
-      room_name,
+      channel_id: channel.id,
+      room_name: channel.slug, // ← 关键: room_name 永远等于 slug
       user_id: user.id,
-      streamer_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "匿名",
-      title: (title || "").slice(0, 200),
-      coding_tool: (coding_tool || "other").slice(0, 30),
-      thumbnail_url: (thumbnail_url || "").slice(0, 500),
+      streamer_name: streamerName,
+      title: (channel.title || "").slice(0, 200),
+      coding_tool: (channel.coding_tool || "other").slice(0, 30),
+      thumbnail_url: (channel.thumbnail_url || "").slice(0, 500),
+      project_name: (channel.project_name || "").slice(0, 200),
+      description: (channel.project_desc || "").slice(0, 1000),
+      stage: (channel.project_stage || "构思中").slice(0, 30),
       status: "live",
       started_at: new Date().toISOString(),
     })
@@ -103,9 +113,9 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  // Notify followers that this user went live (fire and forget)
-  const streamerName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "匿名";
-  const avatarUrl = user.user_metadata?.avatar_url || user.user_metadata?.picture || "";
+  // 通知关注者 (异步, fire-and-forget)
+  const avatarUrl =
+    user.user_metadata?.avatar_url || user.user_metadata?.picture || "";
   supabase
     .from("follows")
     .select("follower_id")
@@ -118,8 +128,8 @@ export async function POST(request: NextRequest) {
         actor_id: user.id,
         actor_name: streamerName,
         actor_avatar: avatarUrl,
-        target_id: room_name,
-        target_title: (title || room_name).slice(0, 200),
+        target_id: channel.slug,
+        target_title: (channel.title || channel.slug).slice(0, 200),
       }));
       supabase.from("notifications").insert(notifications).then(() => {});
     });
@@ -127,14 +137,18 @@ export async function POST(request: NextRequest) {
   return Response.json({ stream: data });
 }
 
-// PATCH: 更新直播间项目信息（含封面图）
+// PATCH: 兼容旧客户端的项目信息热更新
+//   - 新代码应该改用 /api/channels PATCH (会自动同步到 live_streams)
+//   - 这里保留以避免破坏正在运行的旧代码路径
 export async function PATCH(request: NextRequest) {
   const supabase = await createClient();
   if (!supabase) {
     return Response.json({ error: "服务未配置" }, { status: 500 });
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) {
     return Response.json({ error: "未登录" }, { status: 401 });
   }
@@ -145,11 +159,9 @@ export async function PATCH(request: NextRequest) {
   } catch {
     return Response.json({ error: "请求格式错误" }, { status: 400 });
   }
-  const { room_name, project_name, description, stage, coding_tool, thumbnail_url } = patchBody;
 
-  if (!room_name) {
-    return Response.json({ error: "room_name 为必填项" }, { status: 400 });
-  }
+  const { project_name, description, stage, coding_tool, thumbnail_url } =
+    patchBody;
 
   const updates: Record<string, string> = {};
   if (project_name !== undefined) updates.project_name = project_name.slice(0, 200);
@@ -158,10 +170,13 @@ export async function PATCH(request: NextRequest) {
   if (coding_tool !== undefined) updates.coding_tool = coding_tool.slice(0, 30);
   if (thumbnail_url !== undefined) updates.thumbnail_url = thumbnail_url.slice(0, 500);
 
+  if (Object.keys(updates).length === 0) {
+    return Response.json({ error: "没有可更新的字段" }, { status: 400 });
+  }
+
   const { data, error } = await supabase
     .from("live_streams")
     .update(updates)
-    .eq("room_name", room_name)
     .eq("user_id", user.id)
     .eq("status", "live")
     .select()
@@ -171,52 +186,120 @@ export async function PATCH(request: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
+  // 同步回 channels 表 (字段名映射)
+  const channelUpdates: Record<string, string> = {};
+  if (project_name !== undefined) channelUpdates.project_name = updates.project_name;
+  if (description !== undefined) channelUpdates.project_desc = updates.description;
+  if (stage !== undefined) channelUpdates.project_stage = updates.stage;
+  if (coding_tool !== undefined) channelUpdates.coding_tool = updates.coding_tool;
+  if (thumbnail_url !== undefined) channelUpdates.thumbnail_url = updates.thumbnail_url;
+  if (Object.keys(channelUpdates).length > 0) {
+    await supabase
+      .from("channels")
+      .update(channelUpdates)
+      .eq("user_id", user.id);
+  }
+
   return Response.json({ stream: data });
 }
 
-// DELETE: 结束直播（标记为 ended，保留历史记录）
-export async function DELETE(request: NextRequest) {
+// DELETE: 结束当前直播
+//   - 把直播会话归档到 stream_history (用于离线频道页摘要)
+//   - 真删 live_streams 行 (live_streams 仅记录"当前正在直播",干净)
+//   - 同步删除 LiveKit 房间, 断开所有观众连接
+export async function DELETE() {
   const supabase = await createClient();
   if (!supabase) {
     return Response.json({ error: "服务未配置" }, { status: 500 });
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) {
     return Response.json({ error: "未登录" }, { status: 401 });
   }
 
-  let delBody: { room_name?: string };
-  try {
-    delBody = await request.json();
-  } catch {
-    return Response.json({ error: "请求格式错误" }, { status: 400 });
-  }
-  const { room_name: del_room_name } = delBody;
-  if (!del_room_name) {
-    return Response.json({ error: "room_name 为必填项" }, { status: 400 });
-  }
-
-  // Mark as ended instead of deleting
-  const { error } = await supabase
+  // 找到当前用户的活跃直播
+  const { data: liveStream } = await supabase
     .from("live_streams")
-    .update({ status: "ended", ended_at: new Date().toISOString() })
-    .eq("room_name", del_room_name)
+    .select("*")
     .eq("user_id", user.id)
-    .eq("status", "live");
+    .eq("status", "live")
+    .maybeSingle();
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+  if (!liveStream) {
+    return Response.json({ ok: true, archived: false });
   }
 
-  // Also delete the LiveKit room to disconnect all participants
+  // 归档到 stream_history
+  await supabase.from("stream_history").insert({
+    channel_id: liveStream.channel_id,
+    user_id: user.id,
+    title: liveStream.title || "",
+    project_name: liveStream.project_name || "",
+    project_stage: liveStream.stage || "",
+    coding_tool: liveStream.coding_tool || "",
+    thumbnail_url: liveStream.thumbnail_url || "",
+    started_at: liveStream.started_at,
+    ended_at: new Date().toISOString(),
+    peak_viewers: liveStream.viewers_count || 0,
+  });
+
+  // 真删除 live_streams 行 (这张表只存"现在正在直播")
+  const { error: delErr } = await supabase
+    .from("live_streams")
+    .delete()
+    .eq("id", liveStream.id);
+  if (delErr) {
+    return Response.json({ error: delErr.message }, { status: 500 });
+  }
+
+  // 断开 LiveKit 房间内所有参与者
   const lkUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
   const lkKey = process.env.LIVEKIT_API_KEY;
   const lkSecret = process.env.LIVEKIT_API_SECRET;
-  if (lkUrl && lkKey && lkSecret) {
+  if (lkUrl && lkKey && lkSecret && liveStream.room_name) {
     const roomService = new RoomServiceClient(lkUrl, lkKey, lkSecret);
-    roomService.deleteRoom(del_room_name).catch(() => {});
+    roomService.deleteRoom(liveStream.room_name).catch(() => {});
   }
 
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, archived: true });
+}
+
+// ────────────────────────────────────────────────────────────────
+// 辅助: 把 channel 残留的活跃 live_streams 归档清理
+// ────────────────────────────────────────────────────────────────
+async function endActiveStreams(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  channelId: string,
+  userId: string
+) {
+  if (!supabase) return;
+  const { data: leftover } = await supabase
+    .from("live_streams")
+    .select("*")
+    .eq("channel_id", channelId)
+    .eq("status", "live");
+  if (!leftover?.length) return;
+
+  for (const row of leftover) {
+    await supabase.from("stream_history").insert({
+      channel_id: channelId,
+      user_id: userId,
+      title: row.title || "",
+      project_name: row.project_name || "",
+      project_stage: row.stage || "",
+      coding_tool: row.coding_tool || "",
+      thumbnail_url: row.thumbnail_url || "",
+      started_at: row.started_at,
+      ended_at: new Date().toISOString(),
+      peak_viewers: row.viewers_count || 0,
+    });
+  }
+  await supabase
+    .from("live_streams")
+    .delete()
+    .eq("channel_id", channelId)
+    .eq("status", "live");
 }

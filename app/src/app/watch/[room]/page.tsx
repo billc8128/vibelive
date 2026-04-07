@@ -36,6 +36,41 @@ interface ChatMsg {
 
 type LayoutMode = "theater" | "default" | "fullscreen";
 
+// 频道数据 (从 /api/channels/[slug] 加载)
+interface ChannelData {
+  channel: {
+    id: string;
+    user_id: string;
+    slug: string;
+    title: string;
+    thumbnail_url: string;
+    project_name: string;
+    project_desc: string;
+    project_stage: string;
+    project_url: string;
+    coding_tool: string;
+    settings: Record<string, unknown>;
+  };
+  profile: {
+    id: string;
+    username: string;
+    display_name: string;
+    avatar_url: string | null;
+    bio: string;
+    followers_count: number;
+  } | null;
+  liveStream: { started_at: string; viewers_count: number } | null;
+  lastSession: {
+    title: string;
+    project_name: string;
+    thumbnail_url: string;
+    started_at: string;
+    ended_at: string;
+    duration_seconds: number;
+    peak_viewers: number;
+  } | null;
+}
+
 const CHAT_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -856,6 +891,7 @@ export default function WatchPage({
 }) {
   const { t } = useI18n();
   const { room: roomName } = use(params);
+  const slug = decodeURIComponent(roomName).toLowerCase();
   const { nickname: profileName } = useNickname();
   const [token, setToken] = useState<string | null>(null);
   const [identity, setIdentity] = useState("");
@@ -865,7 +901,35 @@ export default function WatchPage({
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("theater");
   const [mobilePanel, setMobilePanel] = useState<"video" | "chat">("video");
 
+  // 频道数据状态: undefined=加载中, null=不存在, 有值=已加载
+  const [channelData, setChannelData] = useState<ChannelData | null | undefined>(undefined);
+
   const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+
+  // ─ 拉取频道 + 当前直播会话, 并轮询以便检测主播开播 ─
+  useEffect(() => {
+    let cancelled = false;
+    const fetchChannel = async () => {
+      try {
+        const res = await fetch(`/api/channels/${encodeURIComponent(slug)}`);
+        if (!res.ok) {
+          if (!cancelled) setChannelData(null); // 不存在
+          return;
+        }
+        const data = (await res.json()) as ChannelData;
+        if (!cancelled) setChannelData(data);
+      } catch {
+        if (!cancelled) setChannelData(null);
+      }
+    };
+    fetchChannel();
+    // 离线时定期重拉, 检测主播是否开播
+    const interval = setInterval(fetchChannel, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [slug]);
 
   const joinWithName = useCallback(async (name: string) => {
     const viewerName = name.trim() || `观众${Math.floor(Math.random() * 9999)}`;
@@ -874,7 +938,7 @@ export default function WatchPage({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          room: decodeURIComponent(roomName),
+          room: slug,
           identity: viewerName,
           isPublisher: false,
         }),
@@ -891,26 +955,47 @@ export default function WatchPage({
       setError(err instanceof Error ? err.message : t('error.joinFailed'));
       setLoading(false);
     }
-  }, [roomName]);
+  }, [slug, t]);
 
-  // Auto-join when profile nickname is resolved
+  // 自动加入: 仅当频道存在且正在直播
   useEffect(() => {
-    if (profileName === null) return; // still loading
+    if (profileName === null) return; // nickname 还在加载
     if (joined) return;
+    if (!channelData || !channelData.liveStream) return; // 频道不存在或离线
     if (profileName) {
-      // Logged in — auto-join with profile name
       joinWithName(profileName);
     } else {
-      // Not logged in — show nickname input
       setLoading(false);
     }
-  }, [profileName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [profileName, channelData, joined, joinWithName]);
 
   const handleJoin = useCallback(() => {
     joinWithName(identity);
   }, [identity, joinWithName]);
 
-  // Loading
+  // ─ 加载中 ─
+  if (channelData === undefined) {
+    return (
+      <div className="ambient-gradient min-h-screen flex items-center justify-center">
+        <span className="font-[family-name:var(--font-pixel)] text-[11px] text-accent-cyan animate-pulse">
+          {t("nav.loading")}
+        </span>
+      </div>
+    );
+  }
+
+  // ─ 频道不存在 ─
+  if (channelData === null) {
+    return <ChannelNotFound slug={slug} />;
+  }
+
+  // ─ 频道存在但主播未开播: 显示频道主页 ─
+  if (!channelData.liveStream) {
+    return <OfflineChannelPage data={channelData} />;
+  }
+
+  // ─ 直播中: 沿用原来的 LiveKit 加入流程 ─
+  // 此处需要 token, 还在加载/获取阶段
   if (loading && !joined) {
     return (
       <div className="ambient-gradient min-h-screen flex items-center justify-center">
@@ -1020,6 +1105,277 @@ export default function WatchPage({
           100% { transform: translateY(-120px) scale(1.5); opacity: 0; }
         }
       `}</style>
+    </div>
+  );
+}
+
+// ─── Channel Not Found ─────────────────────────────────────────────
+function ChannelNotFound({ slug }: { slug: string }) {
+  const { t } = useI18n();
+  return (
+    <div className="ambient-gradient min-h-screen flex items-center justify-center px-4">
+      <div className="pixel-border bg-bg-card p-8 max-w-md w-full text-center space-y-4">
+        <span className="font-[family-name:var(--font-pixel)] text-4xl block opacity-30">⌀</span>
+        <h1 className="font-[family-name:var(--font-pixel)] text-[12px] text-accent-pink glow-pink">
+          {t("channelPage.notFound")}
+        </h1>
+        <p className="text-xs text-text-secondary">
+          {t("channelPage.notFoundHint")}
+        </p>
+        <p className="text-[10px] text-text-secondary/40 break-all">/watch/{slug}</p>
+        <Link
+          href="/"
+          className="pixel-btn inline-block border-accent-cyan text-accent-cyan hover:bg-accent-cyan hover:text-bg-primary text-[10px] px-4 py-2"
+        >
+          ◁ {t("nav.backToHome")}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ─── Offline Channel Page (主播离线时的频道主页) ──────────────────
+function OfflineChannelPage({ data }: { data: ChannelData }) {
+  const { t } = useI18n();
+  const { channel, profile, lastSession } = data;
+  const [isOwner, setIsOwner] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+
+  // 检查是否当前用户是频道主 + 关注状态
+  useEffect(() => {
+    const supabase = createClient();
+    if (!supabase) return;
+    supabase.auth.getUser().then(({ data: u }) => {
+      if (!u.user) return;
+      const owner = u.user.id === channel.user_id;
+      setIsOwner(owner);
+      if (!owner) {
+        fetch(`/api/follows?following_id=${channel.user_id}`)
+          .then((r) => r.json())
+          .then((d) => setIsFollowing(!!d.isFollowing))
+          .catch(() => {});
+      }
+    });
+  }, [channel.user_id]);
+
+  const toggleFollow = async () => {
+    if (followLoading) return;
+    setFollowLoading(true);
+    try {
+      const res = await fetch("/api/follows", {
+        method: isFollowing ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ following_id: channel.user_id }),
+      });
+      if (res.ok) setIsFollowing(!isFollowing);
+    } catch {}
+    setFollowLoading(false);
+  };
+
+  const formatDuration = (s: number) => {
+    if (!s) return "—";
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+
+  const formatDate = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString("zh-CN", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  };
+
+  const displayName = profile?.display_name || channel.slug;
+  const avatarUrl = profile?.avatar_url || "";
+
+  return (
+    <div className="ambient-gradient min-h-screen">
+      {/* Top bar */}
+      <div className="hud-panel flex items-center gap-3 h-11 px-4 shrink-0">
+        <Link href="/" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/images/logo.png" alt="VibeLive" className="w-5 h-5" />
+          <span className="font-[family-name:var(--font-pixel)] text-[13px] tracking-widest glow-green text-accent-green">
+            VIBELIVE
+          </span>
+        </Link>
+        <span className="w-px h-4 bg-border-pixel/60" />
+        <span className="text-sm text-text-primary truncate">/watch/{channel.slug}</span>
+        <div className="flex-1" />
+        <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary/60">
+          {t("channelPage.offline")}
+        </span>
+      </div>
+
+      <div className="mx-auto max-w-[960px] px-4 py-8 space-y-6">
+        {/* Header card: avatar + name + actions */}
+        <div className="pixel-border bg-bg-card p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="w-20 h-20 border-2 border-border-pixel bg-bg-primary overflow-hidden shrink-0">
+            {avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center">
+                <span className="font-[family-name:var(--font-pixel)] text-2xl text-accent-purple">
+                  {displayName.slice(0, 1).toUpperCase()}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <h1 className="font-[family-name:var(--font-pixel)] text-[13px] text-text-primary mb-1 truncate">
+              {displayName}
+            </h1>
+            <p className="text-[10px] text-text-secondary/60 mb-2">
+              /watch/{channel.slug}
+            </p>
+            <div className="flex items-center gap-3 text-[10px] text-text-secondary">
+              <span>
+                <span className="text-accent-cyan font-medium">
+                  {profile?.followers_count ?? 0}
+                </span>{" "}
+                {t("profile.followers")}
+              </span>
+              <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary/60">
+                {t("channelPage.offline")}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex gap-2 shrink-0">
+            {isOwner ? (
+              <Link
+                href="/go-live"
+                className="pixel-btn border-accent-green text-accent-green hover:bg-accent-green hover:text-bg-primary text-[10px] px-4 py-2"
+              >
+                ▶ {t("nav.goLive")}
+              </Link>
+            ) : (
+              <button
+                onClick={toggleFollow}
+                disabled={followLoading}
+                className={`pixel-btn text-[10px] px-4 py-2 ${
+                  isFollowing
+                    ? "border-text-secondary text-text-secondary"
+                    : "border-accent-pink text-accent-pink hover:bg-accent-pink hover:text-white"
+                }`}
+              >
+                {isFollowing ? t("btn.following") : t("btn.follow")}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* About / bio */}
+        {profile?.bio && (
+          <div className="pixel-border bg-bg-card p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-cyan">◈</span>
+              <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
+                {t("channelPage.about")}
+              </span>
+            </div>
+            <p className="text-sm text-text-primary/80 whitespace-pre-wrap leading-relaxed">
+              {profile.bio}
+            </p>
+          </div>
+        )}
+
+        {/* Current project (always show even when offline) */}
+        {(channel.project_name || channel.project_desc) && (
+          <div className="pixel-border bg-bg-card p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-purple">◈</span>
+              <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
+                {t("goLive.projectInfo")}
+              </span>
+            </div>
+            {channel.project_name && (
+              <div>
+                <p className="text-base text-text-primary font-medium">{channel.project_name}</p>
+                {channel.project_stage && (
+                  <span className="inline-block mt-1 px-2 py-0.5 text-xs border border-accent-cyan/40 text-accent-cyan bg-accent-cyan/10">
+                    {channel.project_stage}
+                  </span>
+                )}
+              </div>
+            )}
+            {channel.project_desc && (
+              <p className="text-xs text-text-primary/80 whitespace-pre-wrap leading-relaxed">
+                {channel.project_desc}
+              </p>
+            )}
+            {channel.project_url && (
+              <a
+                href={channel.project_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block text-xs text-accent-cyan hover:underline"
+              >
+                ↗ {channel.project_url}
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Last stream summary */}
+        <div className="pixel-border bg-bg-card p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-yellow">◈</span>
+            <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
+              {t("channelPage.lastStream")}
+            </span>
+          </div>
+          {lastSession ? (
+            <div className="flex flex-col sm:flex-row gap-4">
+              {lastSession.thumbnail_url && (
+                <div className="w-full sm:w-48 aspect-video border border-border-pixel overflow-hidden shrink-0 bg-bg-primary">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={lastSession.thumbnail_url}
+                    alt="cover"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+              )}
+              <div className="flex-1 min-w-0 space-y-2">
+                <p className="text-sm text-text-primary font-medium truncate">
+                  {lastSession.title || lastSession.project_name || "—"}
+                </p>
+                <p className="text-[10px] text-text-secondary/60">
+                  {formatDate(lastSession.started_at)}
+                </p>
+                <div className="flex flex-wrap gap-4 text-[10px] text-text-secondary">
+                  <span>
+                    {t("channelPage.duration")}:{" "}
+                    <span className="text-accent-cyan">
+                      {formatDuration(lastSession.duration_seconds)}
+                    </span>
+                  </span>
+                  <span>
+                    {t("channelPage.peakViewers")}:{" "}
+                    <span className="text-accent-cyan">{lastSession.peak_viewers}</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-text-secondary/40 text-center py-4">
+              {t("channelPage.noHistory")}
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
