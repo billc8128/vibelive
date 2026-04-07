@@ -51,11 +51,8 @@ export function ChatPanel() {
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
         {messages.map((msg) => (
-          <div key={msg.id} className="group hover:bg-bg-surface/30 rounded px-1.5 py-1 -mx-1.5 transition-colors">
-            <div className="flex items-baseline gap-1.5">
-              <span className="font-[family-name:var(--font-pixel)] text-[6px] text-text-secondary/40 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                {formatTime(msg.timestamp)}
-              </span>
+          <div key={msg.id} className="hover:bg-bg-surface/30 rounded px-1.5 py-1 -mx-1.5 transition-colors">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
               <span
                 className={`font-[family-name:var(--font-pixel)] text-[7px] shrink-0 ${
                   msg.userId === "me"
@@ -65,7 +62,10 @@ export function ChatPanel() {
               >
                 {msg.username}
               </span>
-              <p className="text-[12px] text-text-primary leading-relaxed break-words">
+              <span className="text-[10px] text-text-secondary/30 shrink-0">
+                {formatTime(msg.timestamp)}
+              </span>
+              <p className="text-[12px] text-text-primary leading-relaxed break-words w-full">
                 {msg.content}
               </p>
             </div>
