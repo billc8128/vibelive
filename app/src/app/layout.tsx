@@ -6,10 +6,6 @@ import { Providers } from "@/components/Providers";
 export const metadata: Metadata = {
   title: "VibeLive — AI Coding Livestream",
   description: "Watch AI write code in real-time. Discover the next product being built.",
-  icons: {
-    icon: "/favicon.ico",
-    apple: "/apple-icon.png",
-  },
 };
 
 export default function RootLayout({
