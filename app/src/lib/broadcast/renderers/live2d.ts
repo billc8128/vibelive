@@ -77,8 +77,15 @@ const INTERNAL_CANVAS_H = 1000;
 
 // pixi-live2d-display 的 internalModel 没有公开类型, 我们需要的字段
 // 拿一个最小接口出来, 避开 any 散落
+interface CubismRendererLike {
+  /** 默认 mask buffer 是 256x256, 严重欠采样 — 我们调高到 2048 修复 mask 锯齿/破洞 */
+  setClippingMaskBufferSize(size: number): void;
+}
+
 interface InternalModelLike {
   coreModel: { setParameterValueById(id: string, value: number, weight?: number): void };
+  /** Cubism4InternalModel 上是 public 的, 直接 .renderer (cubism4.js#10797) */
+  renderer?: CubismRendererLike;
   on(event: string, cb: () => void): unknown;
   off?(event: string, cb: () => void): unknown;
 }
@@ -86,6 +93,11 @@ interface InternalModelLike {
 interface Live2DModelLike {
   internalModel: InternalModelLike;
 }
+
+// Cubism 4 mask buffer 分辨率 — 默认 256, 改 2048 修复 mask 边缘锯齿/穿透.
+// 越大越精细, 但每个 source 多分配几张 framebuffer texture, 显存代价线性
+// 增长. 2048 在 saba1B 这种单模型场景几乎无感.
+const MASK_BUFFER_SIZE = 2048;
 
 export class Live2DRenderer implements SourceRenderer {
   private app: Application | null = null;
@@ -157,9 +169,17 @@ export class Live2DRenderer implements SourceRenderer {
     this.app = app;
 
     // 5. 加载模型 — pixi-live2d-display 自动 fetch model3.json + 所有依赖
+    //
+    // 关键 options:
+    //   - autoFocus: false  → 不让模型 focus 跟随鼠标 (默认 true 会跟鼠标转头,
+    //                          跟我们的面捕冲突, 也不是用户期望的行为)
+    //   - autoHitTest: false → 不监听点击 hit-test (没用到, 关掉省点事件)
     let model: Live2DModelType;
     try {
-      model = await Live2DModel.from(this.modelUrl);
+      model = await Live2DModel.from(this.modelUrl, {
+        autoFocus: false,
+        autoHitTest: false,
+      });
     } catch (e) {
       // 加载失败 — 释放 PIXI 资源然后抛
       try { app.destroy(true, { children: true, texture: true }); } catch {}
@@ -184,6 +204,18 @@ export class Live2DRenderer implements SourceRenderer {
     model.y = INTERNAL_CANVAS_H / 2;
 
     app.stage.addChild(model);
+
+    // 6.5. 提高 mask 渲染分辨率 — 默认 256x256 在 800x1000 model canvas 上
+    //      会出现明显 mask 锯齿 / clip 边缘穿透. setClippingMaskBufferSize
+    //      会重建 framebuffer, 必须在 model 完全 initialize 后调.
+    //      try/catch 因为 Cubism2 model 没有 .renderer (我们只用 cubism4
+    //      入口理论上不会, 但保险起见).
+    try {
+      const internal = (model as unknown as Live2DModelLike).internalModel;
+      internal.renderer?.setClippingMaskBufferSize(MASK_BUFFER_SIZE);
+    } catch (e) {
+      console.warn("[live2d] setClippingMaskBufferSize 失败:", e);
+    }
 
     this.model = model;
 
