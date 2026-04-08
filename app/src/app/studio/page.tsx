@@ -74,6 +74,9 @@ export default function StudioPage() {
   const [faceTracking, setFaceTracking] = useState(false);
   const [faceTrackErr, setFaceTrackErr] = useState<string | null>(null);
 
+  // 推流是否带麦克风 — 启动前可改, live 中改无效 (要重连)
+  const [withMic, setWithMic] = useState(false);
+
   // Compositor 输出 canvas 的 ref — 父组件持有, 推流时直接 captureStream
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -101,7 +104,7 @@ export default function StudioPage() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     try {
-      await publisherRef.current!.start(canvas, { withMic: false });
+      await publisherRef.current!.start(canvas, { withMic });
     } catch {
       // start 内部已经 setSnap("error"), UI 自动显示错误
     }
@@ -127,7 +130,7 @@ export default function StudioPage() {
           </span>
           <div className="flex-1 h-px bg-gradient-to-r from-accent-purple/40 to-transparent" />
           <span className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary opacity-50">
-            phase 3d · livekit publish + 拖拽手柄
+            phase 3e · 自定义 url + 麦克风开关
           </span>
         </div>
 
@@ -163,6 +166,20 @@ export default function StudioPage() {
               </p>
             )}
           </div>
+          {/* Mic toggle — 仅推流前可改, live 中 disabled */}
+          <button
+            type="button"
+            onClick={() => setWithMic((v) => !v)}
+            disabled={isLive || isPublishBusy}
+            className={`pixel-border px-3 py-1.5 font-[family-name:var(--font-pixel)] text-[9px] uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              withMic
+                ? "bg-accent-cyan/20 text-accent-cyan"
+                : "bg-bg-card text-text-secondary hover:bg-accent-cyan/10"
+            }`}
+            title={isLive ? "推流中无法切换" : "推流时是否同时推送麦克风"}
+          >
+            {withMic ? "● 麦克风" : "○ 麦克风"}
+          </button>
           {isLive ? (
             <button
               type="button"
@@ -276,12 +293,12 @@ export default function StudioPage() {
           </div>
         </div>
 
-        {/* ── Footer / Phase 3e hint ─────────────── */}
+        {/* ── Footer / Phase 3f hint ─────────────── */}
         <div className="mt-8 pixel-border bg-bg-card/50 p-4">
           <p className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary leading-relaxed">
-            ◇ Phase 3e 待做: 模型迁移到 Vercel Blob (saba1B 15MB git
-            膨胀) · 加 hiyori_vts 等明星模型 · 自定义 model URL 加载入口 ·
-            麦克风音频开关
+            ◇ Phase 3f 待做: 模型迁移到 Vercel Blob (saba1B 15MB git
+            膨胀) · 加 hiyori_vts/hijiki/tororo 等 Cubism 官方明星模型 ·
+            场景持久化到 channel.settings · 录制 / 回放
           </p>
         </div>
       </div>

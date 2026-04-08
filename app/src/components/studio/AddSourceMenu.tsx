@@ -42,10 +42,16 @@ const PRIMARY_OPTIONS: {
   },
 ];
 
-type Step = "closed" | "primary" | "live2d";
+type Step = "closed" | "primary" | "live2d" | "live2d-custom";
 
 export function AddSourceMenu({ onAdd }: AddSourceMenuProps) {
   const [step, setStep] = useState<Step>("closed");
+
+  // 自定义 URL 表单状态 — 仅在 step === "live2d-custom" 显示
+  const [customModelUrl, setCustomModelUrl] = useState("");
+  const [customVtubeUrl, setCustomVtubeUrl] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [customError, setCustomError] = useState<string | null>(null);
 
   const handlePickPrimary = (type: "camera" | "screen" | "live2d") => {
     if (type === "camera") {
@@ -71,6 +77,36 @@ export function AddSourceMenu({ onAdd }: AddSourceMenuProps) {
         vtubeConfigUrl: entry.vtubeConfigUrl,
       })
     );
+    setStep("closed");
+  };
+
+  const handleSubmitCustom = () => {
+    const url = customModelUrl.trim();
+    if (!url) {
+      setCustomError("model3.json URL 必填");
+      return;
+    }
+    if (!url.endsWith(".model3.json")) {
+      setCustomError("URL 应该以 .model3.json 结尾");
+      return;
+    }
+    // 派生一个稳定 avatarId — 用 URL 路径最后一段去 .model3.json 后缀
+    const lastSlash = url.lastIndexOf("/");
+    const fileName = lastSlash >= 0 ? url.slice(lastSlash + 1) : url;
+    const derivedId = fileName.replace(/\.model3\.json$/, "") || "custom";
+    onAdd(
+      createLive2DSource({
+        name: customName.trim() || derivedId,
+        avatarId: derivedId,
+        modelUrl: url,
+        vtubeConfigUrl: customVtubeUrl.trim() || undefined,
+      })
+    );
+    // 重置 + 关闭
+    setCustomModelUrl("");
+    setCustomVtubeUrl("");
+    setCustomName("");
+    setCustomError(null);
     setStep("closed");
   };
 
@@ -143,7 +179,102 @@ export function AddSourceMenu({ onAdd }: AddSourceMenuProps) {
                 还没有预置模型 — 在 model-registry.ts 里加条目
               </p>
             )}
+            {/* 自定义 URL 入口 — 永远在末尾, 用户可以贴第三方 / 自托管 model3.json URL */}
+            <button
+              type="button"
+              onClick={() => {
+                setCustomError(null);
+                setStep("live2d-custom");
+              }}
+              className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-accent-cyan/10 transition-colors"
+            >
+              <span className="font-[family-name:var(--font-pixel)] text-accent-cyan w-5 text-center">
+                +
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-accent-cyan">自定义 URL</p>
+                <p className="text-[10px] text-text-secondary/70 truncate">
+                  贴第三方 / 自托管的 model3.json
+                </p>
+              </div>
+            </button>
           </div>
+        </div>
+      )}
+
+      {step === "live2d-custom" && (
+        <div className="pixel-border bg-bg-card p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-cyan uppercase tracking-wider">
+              自定义 Live2D URL
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setStep("live2d");
+                setCustomError(null);
+              }}
+              className="text-[10px] text-text-secondary hover:text-text-primary"
+            >
+              ← 返回
+            </button>
+          </div>
+
+          <div>
+            <label className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mb-1">
+              model3.json URL <span className="text-accent-red">*</span>
+            </label>
+            <input
+              type="url"
+              value={customModelUrl}
+              onChange={(e) => setCustomModelUrl(e.target.value)}
+              placeholder="https://.../foo.model3.json"
+              className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mb-1">
+              .vtube.json URL <span className="opacity-60">(可选, 用于面捕参数映射)</span>
+            </label>
+            <input
+              type="url"
+              value={customVtubeUrl}
+              onChange={(e) => setCustomVtubeUrl(e.target.value)}
+              placeholder="https://.../foo.vtube.json"
+              className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mb-1">
+              显示名 <span className="opacity-60">(可选)</span>
+            </label>
+            <input
+              type="text"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder="留空则用文件名"
+              className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
+            />
+          </div>
+
+          {customError && (
+            <p className="text-[10px] text-accent-red/90">⚠ {customError}</p>
+          )}
+
+          <button
+            type="button"
+            onClick={handleSubmitCustom}
+            className="w-full pixel-border bg-accent-purple/15 hover:bg-accent-purple/25 px-3 py-1.5 text-xs text-accent-purple font-[family-name:var(--font-pixel)] transition-colors"
+          >
+            + 添加
+          </button>
+
+          <p className="text-[10px] text-text-secondary/60 leading-relaxed">
+            提示: 模型必须公网可访问且 CORS 允许 vibelieveai.com.
+            Cubism 4 / VTube Studio 模型规格.
+          </p>
         </div>
       )}
     </div>
