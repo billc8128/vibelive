@@ -19,4 +19,23 @@ describe("runtime routes", () => {
 
     expect(res.statusCode).toBe(401);
   });
+
+  it("starts a room runtime when authorized", async () => {
+    process.env.ORCHESTRATOR_SECRET = "expected-secret";
+
+    const server = buildServer();
+    const res = await server.inject({
+      method: "POST",
+      url: "/runtime/start",
+      headers: { "x-orchestrator-secret": "expected-secret" },
+      payload: { roomSlug: "demo-room" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      roomSlug: "demo-room",
+      runtimeCount: 1,
+    });
+  });
 });

@@ -10,7 +10,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "fastify": "^5.6.1"
+    "fastify": "^5.6.1",
+    "livekit-server-sdk": "^2.15.0"
   },
   "devDependencies": {
     "@types/node": "^24.9.2",

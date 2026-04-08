@@ -23,7 +23,10 @@ import {
 import { useNickname } from "@/lib/useNickname";
 import { useI18n } from "@/lib/i18n/context";
 import type { TranslationKey } from "@/lib/i18n/zh";
-import { isViewerParticipant } from "@/lib/participants";
+import {
+  AI_AUDIENCE_IDENTITY_PREFIX,
+  isViewerParticipant,
+} from "@/lib/participants";
 import {
   ReactionOverlay,
   useReactionSystem,
@@ -977,7 +980,10 @@ export default function WatchPage({
   }, [slug]);
 
   const joinWithName = useCallback(async (name: string) => {
-    const viewerName = name.trim() || `观众${Math.floor(Math.random() * 9999)}`;
+    const rawViewerName = name.trim() || `观众${Math.floor(Math.random() * 9999)}`;
+    const viewerName = rawViewerName.startsWith(AI_AUDIENCE_IDENTITY_PREFIX)
+      ? `viewer-${rawViewerName.slice(AI_AUDIENCE_IDENTITY_PREFIX.length) || Math.floor(Math.random() * 9999)}`
+      : rawViewerName;
     try {
       const res = await fetch("/api/livekit/token", {
         method: "POST",
