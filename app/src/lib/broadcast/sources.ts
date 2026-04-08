@@ -42,8 +42,18 @@ export interface ScreenSource extends BaseSource {
 
 export interface Live2DSource extends BaseSource {
   type: "live2d";
-  /** 预置 avatar 的标识符, MVP 阶段只支持 "default" 占位 */
+  /** 预置 avatar 的标识符 (可显示在 UI), e.g. "saba1B" / "default" */
   avatarId: string;
+  /**
+   * model3.json 的 URL (相对或绝对). 空字符串 → 用占位 renderer
+   * (anime-style 头像 + idle bob), 不需要 Cubism Core / 网络资源.
+   * 非空 → 走真 Live2D renderer (PIXI + Cubism Core CDN + 模型加载).
+   *
+   * 例如:
+   *   "/live2d/saba1B/saba1B.model3.json"   (本地 public/)
+   *   "https://cdn.example.com/.../foo.model3.json"  (生产 CDN)
+   */
+  modelUrl: string;
 }
 
 export interface ImageSource extends BaseSource {
@@ -109,7 +119,7 @@ export function createScreenSource(
 }
 
 export function createLive2DSource(
-  opts: NewSourceOptions & { avatarId?: string } = {}
+  opts: NewSourceOptions & { avatarId?: string; modelUrl?: string } = {}
 ): Live2DSource {
   return {
     id: nextId("l2d"),
@@ -117,6 +127,8 @@ export function createLive2DSource(
     name: opts.name || "Live2D 皮套",
     visible: true,
     avatarId: opts.avatarId || "default",
+    // 默认空 → 走占位 renderer; 调用方传 modelUrl 才用真 PIXI/Cubism
+    modelUrl: opts.modelUrl ?? "",
     transform: { ...centerBox(400, 500, 20), ...opts.transform },
   };
 }

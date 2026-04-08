@@ -1,15 +1,24 @@
 "use client";
 
 import { useReducer } from "react";
+import dynamic from "next/dynamic";
 import {
   createEmptyScene,
   sceneReducer,
 } from "@/lib/broadcast/scene";
 import { createLive2DSource } from "@/lib/broadcast/sources";
-import { SceneCanvas } from "@/components/studio/SceneCanvas";
 import { SourceList } from "@/components/studio/SourceList";
 import { SourceInspector } from "@/components/studio/SourceInspector";
 import { AddSourceMenu } from "@/components/studio/AddSourceMenu";
+
+// SceneCanvas import 链最终拉到 PIXI + pixi-live2d-display, 这两个库在
+// 模块顶层访问 window, Next.js prerender 阶段 (server) 会 ReferenceError.
+// 用 next/dynamic + ssr:false 把 SceneCanvas 限制为纯 client 加载,
+// 整个 broadcast/renderers/* 链就不会被 SSR evaluate.
+const SceneCanvas = dynamic(
+  () => import("@/components/studio/SceneCanvas").then((m) => m.SceneCanvas),
+  { ssr: false }
+);
 
 // ────────────────────────────────────────────────────────────────
 // /studio — 直播工作室原型 (Phase 1 MVP)
@@ -27,9 +36,16 @@ import { AddSourceMenu } from "@/components/studio/AddSourceMenu";
 // ────────────────────────────────────────────────────────────────
 
 function makeInitialScene() {
-  // 默认放一个 Live2D 占位, 让用户访问 /studio 立刻看到东西
+  // 默认放 saba1B (从 VTube Studio 复制到 public/live2d/), 让用户访问 /studio
+  // 立刻看到真 Live2D 模型. 这是 Phase 2 的核心体验.
   const scene = createEmptyScene();
-  scene.sources.push(createLive2DSource({ name: "默认皮套" }));
+  scene.sources.push(
+    createLive2DSource({
+      name: "saba1B",
+      avatarId: "saba1B",
+      modelUrl: "/live2d/saba1B/saba1B.model3.json",
+    })
+  );
   return scene;
 }
 

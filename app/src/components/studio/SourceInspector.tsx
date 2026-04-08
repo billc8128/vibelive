@@ -58,26 +58,42 @@ export function SourceInspector({ scene, dispatch }: SourceInspectorProps) {
 
       {/* type-specific 字段 */}
       {source.type === "live2d" && (
-        <div>
-          <label className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mb-1">
-            皮套 ID (MVP 占位)
-          </label>
-          <input
-            type="text"
-            value={source.avatarId}
-            onChange={(e) =>
-              dispatch({
-                type: "updateSource",
-                id: source.id,
-                patch: { avatarId: e.target.value },
-              })
-            }
-            placeholder="default"
-            className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
-          />
-          <p className="text-[10px] text-text-secondary/60 mt-1">
-            修改 ID 会换一个色调,真实 Live2D 接入后这里换成皮套选择器
-          </p>
+        <div className="space-y-2">
+          <div>
+            <label className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mb-1">
+              皮套 ID
+            </label>
+            <input
+              type="text"
+              value={source.avatarId}
+              onChange={(e) =>
+                dispatch({
+                  type: "updateSource",
+                  id: source.id,
+                  patch: { avatarId: e.target.value },
+                })
+              }
+              placeholder="default"
+              className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary focus:border-accent-cyan focus:outline-none"
+            />
+          </div>
+          {source.modelUrl ? (
+            <div>
+              <label className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mb-1">
+                模型 URL
+              </label>
+              <p className="text-[10px] text-accent-green/80 break-all">
+                {source.modelUrl}
+              </p>
+              <p className="text-[10px] text-text-secondary/60 mt-1">
+                Cubism 4 模型 (兼容 VTube Studio 模型规格)
+              </p>
+            </div>
+          ) : (
+            <p className="text-[10px] text-text-secondary/60">
+              占位 renderer · 修改皮套 ID 会换一个色调
+            </p>
+          )}
         </div>
       )}
 

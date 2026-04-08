@@ -4,6 +4,7 @@ import type { SourceRenderer } from "./renderers/types";
 import { CameraRenderer } from "./renderers/camera";
 import { ScreenRenderer } from "./renderers/screen";
 import { Live2DPlaceholderRenderer } from "./renderers/live2d-placeholder";
+import { Live2DRenderer } from "./renderers/live2d";
 
 // ────────────────────────────────────────────────────────────────
 // Compositor — Scene → Canvas frame.
@@ -140,6 +141,11 @@ export class Compositor {
         return r;
       }
       case "live2d":
+        // 有 modelUrl → 真 PIXI + Cubism Core 渲染
+        // 没 modelUrl (空字符串) → 占位 renderer (anime 头像 + idle bob)
+        if (source.modelUrl) {
+          return new Live2DRenderer({ modelUrl: source.modelUrl });
+        }
         return new Live2DPlaceholderRenderer({ avatarId: source.avatarId });
       case "image":
         // MVP 不实现 image renderer (留 stub 以免 TS exhaustiveness 报错)

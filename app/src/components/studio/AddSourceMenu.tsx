@@ -22,7 +22,7 @@ interface AddSourceMenuProps {
 const OPTIONS: { type: "camera" | "screen" | "live2d"; label: string; icon: string; desc: string }[] = [
   { type: "camera", label: "摄像头",   icon: "◉", desc: "网络摄像头实时画面" },
   { type: "screen", label: "屏幕共享", icon: "▣", desc: "桌面 / 窗口 / 标签页" },
-  { type: "live2d", label: "Live2D 皮套", icon: "◈", desc: "虚拟形象 (MVP 占位)" },
+  { type: "live2d", label: "Live2D 皮套 (saba1B)", icon: "◈", desc: "VTube Studio 模型" },
 ];
 
 export function AddSourceMenu({ onAdd }: AddSourceMenuProps) {
@@ -33,7 +33,14 @@ export function AddSourceMenu({ onAdd }: AddSourceMenuProps) {
     switch (type) {
       case "camera": source = createCameraSource(); break;
       case "screen": source = createScreenSource(); break;
-      case "live2d": source = createLive2DSource(); break;
+      case "live2d":
+        // MVP: Live2D 默认就用 saba1B (唯一预置模型). 后续可加模型选择器.
+        source = createLive2DSource({
+          name: "saba1B",
+          avatarId: "saba1B",
+          modelUrl: "/live2d/saba1B/saba1B.model3.json",
+        });
+        break;
     }
     onAdd(source);
     setOpen(false);
