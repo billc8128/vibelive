@@ -1,5 +1,10 @@
 import { Application, Ticker } from "pixi.js";
-import { Live2DModel } from "pixi-live2d-display-lipsyncpatch/cubism4";
+// ⚠ 不能 static import "pixi-live2d-display-lipsyncpatch/cubism4" —
+// 那个模块在顶层有 `if (!window.Live2DCubismCore) throw`, 一旦被 bundler
+// 解析 (静态 import) 就立刻 evaluate, 而那时我们的 loadCubismCore 还没跑.
+// 改用 `import type` (TS 编译后擦除, 无 runtime side effect) + dynamic
+// import 在 init() 里, 顺序保证: loadCubismCore → import() → 拿构造器.
+import type { Live2DModel as Live2DModelType } from "pixi-live2d-display-lipsyncpatch/cubism4";
 import type { Source, TransformBox } from "../sources";
 import type { SourceRenderer } from "./types";
 import { loadCubismCore } from "../cubism-loader";
@@ -42,9 +47,23 @@ import { ExpressionApplier } from "../expression-applier";
 //      (头发摆动等) 用上一帧的旧值, 1 帧延迟可忽略.
 // ────────────────────────────────────────────────────────────────
 
+// 第一次成功 dynamic import 后填充, 之后所有 Live2DRenderer 共享.
+// 用模块级缓存避免每个 source 都做一次完整的 cubism4 module load.
+let Live2DModelCtor: typeof Live2DModelType | null = null;
+
+async function ensureLive2DModule(): Promise<typeof Live2DModelType> {
+  if (Live2DModelCtor) return Live2DModelCtor;
+  // 顺序很重要 — Cubism Core 必须先注入 window.Live2DCubismCore,
+  // 否则下一行的 dynamic import 一 evaluate cubism4 模块就 throw.
+  await loadCubismCore();
+  const mod = await import("pixi-live2d-display-lipsyncpatch/cubism4");
+  Live2DModelCtor = mod.Live2DModel;
+  return Live2DModelCtor;
+}
+
 // 全局只 register 一次 PIXI Ticker — 多个 source 实例共享
 let tickerRegistered = false;
-function ensureTickerRegistered() {
+function ensureTickerRegistered(Live2DModel: typeof Live2DModelType) {
   if (tickerRegistered) return;
   Live2DModel.registerTicker(Ticker);
   tickerRegistered = true;
@@ -70,7 +89,7 @@ interface Live2DModelLike {
 
 export class Live2DRenderer implements SourceRenderer {
   private app: Application | null = null;
-  private model: Live2DModel | null = null;
+  private model: Live2DModelType | null = null;
   private modelUrl: string;
   private vtubeConfigUrl: string | undefined;
   private applier: VtubeApplier | null = null;
@@ -107,11 +126,12 @@ export class Live2DRenderer implements SourceRenderer {
   }
 
   async init(): Promise<void> {
-    // 1. 等 Cubism Core 全局可用 (注入 <script> + onload)
-    await loadCubismCore();
+    // 1. 加载 Cubism Core + dynamic import cubism4 模块, 拿到 Live2DModel
+    //    构造器. ensureLive2DModule 内部保证两步顺序正确, 模块级缓存复用.
+    const Live2DModel = await ensureLive2DModule();
 
     // 2. 注册 PIXI ticker (全局一次)
-    ensureTickerRegistered();
+    ensureTickerRegistered(Live2DModel);
 
     // 3. 平行启动: vtube config 加载 (可选, 失败不阻塞模型)
     const configPromise = this.vtubeConfigUrl
@@ -137,7 +157,7 @@ export class Live2DRenderer implements SourceRenderer {
     this.app = app;
 
     // 5. 加载模型 — pixi-live2d-display 自动 fetch model3.json + 所有依赖
-    let model: Live2DModel;
+    let model: Live2DModelType;
     try {
       model = await Live2DModel.from(this.modelUrl);
     } catch (e) {

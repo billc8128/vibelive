@@ -11,13 +11,21 @@
 //   - 后续调用 → 直接 resolve 已存的 promise
 //   - 多个 source 同时初始化 → 共享同一个 in-flight 请求
 //
-// 用 Live2D Inc 官方 SDK CDN — 不依赖第三方镜像, 不会因 GitHub 仓库
-// 改名而 404. 之前用的 jsdelivr/dylanNew/live2d 在 2026 年初消失了
-// (Phase 3a 还能用, Phase 3f 验证时 404), 切到官方 URL.
+// CDN 历史:
+//   1. jsdelivr/dylanNew/live2d  → 2026 年初 404 消失
+//   2. cubism.live2d.com 官方 CDN → 200 + CORS 正常, 但部分用户 (本地代理 /
+//      防火墙) 拿不到, pixi-live2d-display 检查 window.Live2DCubismCore 时
+//      还是 undefined → "Could not find Cubism 4 runtime"
+//   3. 当前: 自托管到 Vercel Blob (跟模型同源) — 用户能访问 vibeliveai.com
+//      就一定能访问这个 JS, 不依赖任何第三方网络路径.
+//
+// 文件本身是从 https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js
+// 拉的官方版 (207155 bytes), license 允许 redistribute 作为 web app 一部分.
+// 升级时直接 vercel blob put 覆盖即可.
 // ────────────────────────────────────────────────────────────────
 
 const CUBISM_CORE_CDN =
-  "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
+  "https://xmshd6g6jkhxjpnl.public.blob.vercel-storage.com/vendor/live2dcubismcore.min.js";
 
 // Global on window — 只在浏览器存在
 declare global {

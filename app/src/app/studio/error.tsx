@@ -20,6 +20,7 @@
 // ────────────────────────────────────────────────────────────────
 
 import { useEffect } from "react";
+import Link from "next/link";
 
 interface StudioErrorProps {
   error: Error & { digest?: string };
@@ -77,12 +78,12 @@ export default function StudioError({ error, reset }: StudioErrorProps) {
             >
               ↻ 重试
             </button>
-            <a
+            <Link
               href="/"
               className="pixel-border px-4 py-2 font-[family-name:var(--font-pixel)] text-[9px] uppercase tracking-wider bg-bg-surface text-text-secondary hover:bg-bg-card transition-colors"
             >
               ← 返回首页
-            </a>
+            </Link>
           </div>
         </div>
       </div>
