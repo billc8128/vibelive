@@ -39,6 +39,9 @@ interface StreamEntry {
   thumbnail_url: string;
   started_at: string;
   ended_at: string | null;
+  // Postgres generated column (007_channels_and_history.sql:90):
+  // greatest(0, extract(epoch from (ended_at - started_at))::int)
+  duration_seconds?: number;
 }
 
 interface Profile {
@@ -121,14 +124,12 @@ export default function ProfilePage() {
 
   // 累计直播时长 — 历史 (stream_history) 所有已结束会话之和。
   // 不包含当前 LIVE 中的会话 (那条在 live_streams, 不在 history endpoint)。
-  // 数据来源是上面 fetch("/api/streams?history=true") 的结果。
-  const totalStreamSeconds = streams.reduce((acc, s) => {
-    if (!s.ended_at || !s.started_at) return acc;
-    const sec = Math.floor(
-      (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000
-    );
-    return acc + Math.max(0, sec);
-  }, 0);
+  // 直接复用 Postgres 的 generated column duration_seconds, 避免前端重算 —
+  // 单一数据源, 永远跟 row 一致。
+  const totalStreamSeconds = streams.reduce(
+    (acc, s) => acc + (s.duration_seconds ?? 0),
+    0
+  );
 
   const formatTotalTime = (sec: number) => {
     if (sec < 60) return t('time.minutes', { m: 0 });
