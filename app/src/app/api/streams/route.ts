@@ -4,6 +4,7 @@ import {
   archiveActiveStreamsForChannel,
   archiveLiveStreamRow,
 } from "@/lib/streams/archive";
+import { verifyAndPruneLiveStreams } from "@/lib/streams/verify";
 
 // ────────────────────────────────────────────────────────────────
 // /api/streams
@@ -50,7 +51,12 @@ export async function GET(request: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  return Response.json({ streams: data ?? [] });
+  // 二道防线: 用 LiveKit listRooms 校验真实状态, 顺手归档僵尸。
+  // webhook (lib 一道防线) 可能漏事件 / 配置错, 这里每次首页请求都自愈。
+  // 见 lib/streams/verify.ts 顶部注释。
+  const { alive } = await verifyAndPruneLiveStreams(data ?? []);
+
+  return Response.json({ streams: alive });
 }
 
 // POST: 开始新的直播会话
