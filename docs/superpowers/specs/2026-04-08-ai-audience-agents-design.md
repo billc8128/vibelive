@@ -387,6 +387,35 @@ After MVP quality is acceptable, expand to:
 - richer moderation / safety controls
 - operational dashboards
 
+## Deployment Notes
+
+### Railway service
+
+- Run the room orchestrator as a long-lived Railway service.
+- Configure `ORCHESTRATOR_SECRET` and match it with the app-side
+  `AI_AUDIENCE_ORCHESTRATOR_SECRET`.
+- Provide LiveKit server credentials so the orchestrator can publish bot chat
+  messages with `RoomServiceClient.sendData`.
+- Keep `SUPABASE_SERVICE_ROLE_KEY` available for future room-state reads, even
+  if the current degraded mode only needs room metadata from the app payload.
+
+### Current degraded mode
+
+- If transcript, screenshot, or short clip input is missing, the runtime still
+  ticks using room title, stage, coding tool, and recent chat.
+- The fallback model emits one short bot-badged message at a time rather than
+  failing the room runtime.
+- Viewer counts remain protected because AI audience identities use a reserved
+  prefix and the watch page filters them out.
+
+### Manual deployment checklist
+
+- [ ] Railway service starts locally
+- [ ] App can reach orchestrator start route
+- [ ] Live room receives bot-badged messages
+- [ ] AI audience identities do not inflate viewer counts
+- [ ] Missing screenshot does not crash the runtime
+
 ## Open Decisions Resolved
 
 - Disclosure mode: natural usernames plus visible bot badge on each message
