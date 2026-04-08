@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import type { Scene } from "@/lib/broadcast/scene";
 import type { Live2DHotkey } from "@/lib/broadcast/sources";
 import { Compositor } from "@/lib/broadcast/compositor";
@@ -29,6 +29,12 @@ interface SceneCanvasProps {
   className?: string;
   /** 是否启用 MediaPipe 面部追踪 → 推送给所有 Live2D renderer */
   faceTrackingEnabled?: boolean;
+  /**
+   * 父组件 ref — SceneCanvas 把 internal canvas element 写进去, 父组件
+   * 在按钮点击等时机用 canvasRef.current 直接调 captureStream() 等.
+   * 不传也行 (无需访问 canvas 的纯展示场景).
+   */
+  canvasRef?: RefObject<HTMLCanvasElement | null>;
   onSourceError?: (sourceId: string, error: Error) => void;
   onScreenEnded?: (sourceId: string) => void;
   /** 面部追踪启动失败 (用户拒绝授权 / 模型加载失败 等) */
@@ -41,12 +47,19 @@ export function SceneCanvas({
   scene,
   className,
   faceTrackingEnabled = false,
+  canvasRef: externalCanvasRef,
   onSourceError,
   onScreenEnded,
   onFaceTrackingError,
   onLive2DReady,
 }: SceneCanvasProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // 内部 ref — compositor 生命周期用; 同时把 element 写入外部 ref (如果有),
+  // 让父组件能直接抓 canvas 调 captureStream() 等.
+  const internalCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const setCanvasRef = (el: HTMLCanvasElement | null) => {
+    internalCanvasRef.current = el;
+    if (externalCanvasRef) externalCanvasRef.current = el;
+  };
   const compositorRef = useRef<Compositor | null>(null);
 
   // 把回调引用稳到 ref 里, 避免 compositor 因 callback 变化反复重建.
@@ -69,7 +82,7 @@ export function SceneCanvas({
   // ref 把"最初"的 scene 闭包进去, 仅供 start() 拿首屏分辨率使用.
   const initialSceneRef = useRef(scene);
   useEffect(() => {
-    const canvas = canvasRef.current;
+    const canvas = internalCanvasRef.current;
     if (!canvas) return;
 
     const compositor = new Compositor({
@@ -138,7 +151,7 @@ export function SceneCanvas({
 
   return (
     <canvas
-      ref={canvasRef}
+      ref={setCanvasRef}
       className={className}
       // 内部分辨率由 compositor.start 设, 这里只控 CSS 显示尺寸
       style={{
