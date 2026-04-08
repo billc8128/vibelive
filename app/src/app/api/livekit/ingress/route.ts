@@ -1,6 +1,6 @@
-import { IngressClient } from "livekit-server-sdk";
 import { IngressInput } from "@livekit/protocol";
 import { createClient } from "@/lib/supabase/server";
+import { getIngressClient } from "@/lib/livekit/server";
 
 // ────────────────────────────────────────────────────────────────
 // /api/livekit/ingress
@@ -15,16 +15,6 @@ import { createClient } from "@/lib/supabase/server";
 // ingress_id 持久化在 channels.settings.ingress_id, 这样 stream key
 // 是稳定的, 用户配置一次 OBS 就能反复使用。
 // ────────────────────────────────────────────────────────────────
-
-function ingressClient() {
-  const lkUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
-  const lkKey = process.env.LIVEKIT_API_KEY;
-  const lkSecret = process.env.LIVEKIT_API_SECRET;
-  if (!lkUrl || !lkKey || !lkSecret) return null;
-  // IngressClient 接受 https/wss 都行, 把 wss 改成 https
-  const host = lkUrl.replace(/^ws/, "http");
-  return new IngressClient(host, lkKey, lkSecret);
-}
 
 // 只把客户端需要的字段抽出来 (避免泄露 protobuf 内部状态)
 function sanitize(info: { ingressId: string; url: string; streamKey: string; participantIdentity: string }) {
@@ -65,7 +55,7 @@ export async function GET() {
     return Response.json({ ingress: null });
   }
 
-  const client = ingressClient();
+  const client = getIngressClient();
   if (!client) {
     return Response.json({ error: "Ingress 未配置" }, { status: 500 });
   }
@@ -91,7 +81,7 @@ export async function POST() {
   }
   const { supabase, channel } = ctx;
 
-  const client = ingressClient();
+  const client = getIngressClient();
   if (!client) {
     return Response.json({ error: "Ingress 未配置" }, { status: 500 });
   }
@@ -153,7 +143,7 @@ export async function DELETE() {
     return Response.json({ ok: true });
   }
 
-  const client = ingressClient();
+  const client = getIngressClient();
   if (client) {
     try {
       await client.deleteIngress(ingressId);

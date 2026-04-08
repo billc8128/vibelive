@@ -1,6 +1,9 @@
 import { NextRequest } from "next/server";
-import { RoomServiceClient } from "livekit-server-sdk";
 import { createClient } from "@/lib/supabase/server";
+import {
+  archiveActiveStreamsForChannel,
+  archiveLiveStreamRow,
+} from "@/lib/streams/archive";
 
 // ────────────────────────────────────────────────────────────────
 // /api/streams
@@ -82,7 +85,7 @@ export async function POST() {
   }
 
   // 同一频道之前的活跃会话(异常残留)归档掉
-  await endActiveStreams(supabase, channel.id, user.id);
+  await archiveActiveStreamsForChannel(supabase, channel.id);
 
   const streamerName =
     user.user_metadata?.full_name ||
@@ -232,74 +235,12 @@ export async function DELETE() {
     return Response.json({ ok: true, archived: false });
   }
 
-  // 归档到 stream_history
-  await supabase.from("stream_history").insert({
-    channel_id: liveStream.channel_id,
-    user_id: user.id,
-    title: liveStream.title || "",
-    project_name: liveStream.project_name || "",
-    project_stage: liveStream.stage || "",
-    coding_tool: liveStream.coding_tool || "",
-    thumbnail_url: liveStream.thumbnail_url || "",
-    started_at: liveStream.started_at,
-    ended_at: new Date().toISOString(),
-    peak_viewers: liveStream.viewers_count || 0,
-  });
-
-  // 真删除 live_streams 行 (这张表只存"现在正在直播")
-  const { error: delErr } = await supabase
-    .from("live_streams")
-    .delete()
-    .eq("id", liveStream.id);
-  if (delErr) {
-    return Response.json({ error: delErr.message }, { status: 500 });
-  }
-
-  // 断开 LiveKit 房间内所有参与者
-  const lkUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
-  const lkKey = process.env.LIVEKIT_API_KEY;
-  const lkSecret = process.env.LIVEKIT_API_SECRET;
-  if (lkUrl && lkKey && lkSecret && liveStream.room_name) {
-    const roomService = new RoomServiceClient(lkUrl, lkKey, lkSecret);
-    roomService.deleteRoom(liveStream.room_name).catch(() => {});
+  // 归档 (写 history + 删 row + 删 LiveKit room)
+  // 走 user supabase client → RLS 校验 user_id, 不会越权
+  const result = await archiveLiveStreamRow(supabase, liveStream);
+  if (!result.archived) {
+    return Response.json({ error: result.reason || "归档失败" }, { status: 500 });
   }
 
   return Response.json({ ok: true, archived: true });
-}
-
-// ────────────────────────────────────────────────────────────────
-// 辅助: 把 channel 残留的活跃 live_streams 归档清理
-// ────────────────────────────────────────────────────────────────
-async function endActiveStreams(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  channelId: string,
-  userId: string
-) {
-  if (!supabase) return;
-  const { data: leftover } = await supabase
-    .from("live_streams")
-    .select("*")
-    .eq("channel_id", channelId)
-    .eq("status", "live");
-  if (!leftover?.length) return;
-
-  for (const row of leftover) {
-    await supabase.from("stream_history").insert({
-      channel_id: channelId,
-      user_id: userId,
-      title: row.title || "",
-      project_name: row.project_name || "",
-      project_stage: row.stage || "",
-      coding_tool: row.coding_tool || "",
-      thumbnail_url: row.thumbnail_url || "",
-      started_at: row.started_at,
-      ended_at: new Date().toISOString(),
-      peak_viewers: row.viewers_count || 0,
-    });
-  }
-  await supabase
-    .from("live_streams")
-    .delete()
-    .eq("channel_id", channelId)
-    .eq("status", "live");
 }
