@@ -598,7 +598,10 @@ function Dashboard({
     }, 1000);
   };
 
-  // ─ Cleanup tracks/room ─
+  // ─ Cleanup broadcast (screen + room) ─
+  // 注意: 故意不动 cam/mic. cam/mic 是独立设备, 横跨整个 dashboard 生命周期,
+  // 不应该被 "停止屏幕共享" 或 "房间断开" 这类事件意外关掉. 早期版本把它们绑在
+  // 一起, 结果用户开了摄像头, 几秒钟后 room 断线一次, cam/mic 就跟着挂了.
   const cleanupBroadcast = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -616,6 +619,22 @@ function Dashboard({
       } catch {}
       audioTrackRef.current = null;
     }
+    if (roomRef.current) {
+      try {
+        roomRef.current.disconnect();
+      } catch {}
+      roomRef.current = null;
+    }
+    setViewers(0);
+    setElapsed(0);
+    setBState("idle");
+  }, []);
+
+  // ─ Cleanup cam/mic (独立) ─
+  // 仅在组件 unmount 或用户显式 toggle off 时调用. cam/mic track 的 stop 由
+  // disableCamera / disableMic 负责; 这里只是个兜底, 卸载时把所有还活着的 track
+  // 都释放掉.
+  const cleanupCamMic = useCallback(() => {
     if (camTrackRef.current) {
       try {
         camTrackRef.current.stop();
@@ -628,18 +647,6 @@ function Dashboard({
       } catch {}
       micTrackRef.current = null;
     }
-    if (roomRef.current) {
-      try {
-        roomRef.current.disconnect();
-      } catch {}
-      roomRef.current = null;
-    }
-    setViewers(0);
-    setElapsed(0);
-    setBState("idle");
-    // 用户开关状态也复位 (cleanup 含义 = 完全停掉, 下次主动开)
-    setCameraEnabled(false);
-    setMicEnabled(false);
   }, []);
 
   // 卸载时清理 (注意: 不调用 DELETE /api/streams; 用户必须显式按"结束直播"。
@@ -648,8 +655,9 @@ function Dashboard({
     return () => {
       if (committedTimerRef.current) clearTimeout(committedTimerRef.current);
       cleanupBroadcast();
+      cleanupCamMic();
     };
-  }, [cleanupBroadcast]);
+  }, [cleanupBroadcast, cleanupCamMic]);
 
   // ─ Camera lifecycle ─────────────────────────────────────────────
   // create local video track → attach 到 dashboard 预览框 → 如果 room 已连
@@ -669,7 +677,8 @@ function Dashboard({
         track.attach(camPreviewRef.current);
       }
       // 直播中已经有 room → 立即 publish, 观众马上看到
-      if (roomRef.current) {
+      // (如果 room 不在, 这条 track 现在只是本地预览, startBroadcast 时再 publish)
+      if (roomRef.current && !track.sid) {
         await roomRef.current.localParticipant.publishTrack(track, {
           source: Track.Source.Camera,
           simulcast: true,
@@ -725,7 +734,7 @@ function Dashboard({
       micTrackRef.current = track;
       // 记下当前 track 用的 deviceId, device-switch effect 据此判断是否需要重启
       appliedMicDeviceIdRef.current = micDeviceId;
-      if (roomRef.current) {
+      if (roomRef.current && !track.sid) {
         await roomRef.current.localParticipant.publishTrack(track, {
           source: Track.Source.Microphone,
         });
@@ -1258,9 +1267,11 @@ function Dashboard({
           { source: Track.Source.ScreenShareAudio }
         );
       }
-      // 用户在 preview 阶段就可能开了 cam/mic — 那时还没 room, track 只是
-      // attach 到本地预览. 现在 room 在了, 把它们也推上去.
-      if (camTrackRef.current) {
+      // 用户在 preview 阶段就可能开了 cam/mic. 走两条路:
+      //   - 如果 enableCamera 那时 roomRef 已经存在 (用户先 pickScreenSource 再开 cam),
+      //     track 已经被 publish 过, .sid 已设置 → 跳过, 防止双 publish 替换原有发布
+      //   - 否则 (用户先开 cam 再 pickScreenSource), track 还没 publish, 这里补一下
+      if (camTrackRef.current && !camTrackRef.current.sid) {
         try {
           await roomRef.current.localParticipant.publishTrack(
             camTrackRef.current,
@@ -1268,7 +1279,7 @@ function Dashboard({
           );
         } catch {}
       }
-      if (micTrackRef.current) {
+      if (micTrackRef.current && !micTrackRef.current.sid) {
         try {
           await roomRef.current.localParticipant.publishTrack(
             micTrackRef.current,
@@ -1556,6 +1567,28 @@ function Dashboard({
                 </div>
               )}
 
+            {/* Camera & Mic — 浏览器模式专属, 实时设备控制. 放在预览框下面是因为
+                这是直播画面的延伸 (主播脸 + 声音), 跟设置项 (右栏) 性质完全不同. */}
+            {mode === "browser" && (
+              <CameraMicPanel
+                cameraEnabled={cameraEnabled}
+                onCameraToggle={setCameraEnabled}
+                cameraBusy={cameraBusy}
+                cameraError={cameraError}
+                cameraDeviceId={cameraDeviceId}
+                onCameraDeviceChange={setCameraDeviceId}
+                videoDevices={videoDevices}
+                camPreviewRef={camPreviewRef}
+                micEnabled={micEnabled}
+                onMicToggle={setMicEnabled}
+                micBusy={micBusy}
+                micError={micError}
+                micDeviceId={micDeviceId}
+                onMicDeviceChange={setMicDeviceId}
+                audioDevices={audioDevices}
+              />
+            )}
+
             {/* OBS panel (URL + key + steps) */}
             {mode === "obs" && (
               <ObsPanel
@@ -1783,27 +1816,6 @@ function Dashboard({
               </Field>
             </SettingsSection>
 
-            {/* Camera & Mic — 浏览器模式专属, 实时设备控制, 不走 commit 流程 */}
-            {mode === "browser" && (
-              <CameraMicPanel
-                cameraEnabled={cameraEnabled}
-                onCameraToggle={setCameraEnabled}
-                cameraBusy={cameraBusy}
-                cameraError={cameraError}
-                cameraDeviceId={cameraDeviceId}
-                onCameraDeviceChange={setCameraDeviceId}
-                videoDevices={videoDevices}
-                camPreviewRef={camPreviewRef}
-                micEnabled={micEnabled}
-                onMicToggle={setMicEnabled}
-                micBusy={micBusy}
-                micError={micError}
-                micDeviceId={micDeviceId}
-                onMicDeviceChange={setMicDeviceId}
-                audioDevices={audioDevices}
-              />
-            )}
-
             <SettingsSection
               title={t("goLive.section.chat")}
               accentClass="text-accent-pink"
@@ -2018,42 +2030,11 @@ function CameraMicPanel({
         </span>
       </div>
 
-      {/* Camera */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <ToggleButton
-            enabled={cameraEnabled}
-            disabled={cameraBusy}
-            onChange={onCameraToggle}
-          />
-          <span className="text-xs text-text-primary">{t("goLive.camMic.camera")}</span>
-          {cameraBusy && (
-            <span className="text-[10px] text-accent-yellow animate-pulse">
-              {t("goLive.camMic.starting")}
-            </span>
-          )}
-        </div>
-        {/* device picker — 仅当用户开过摄像头(label 才有值)且设备数 ≥ 1 时显示 */}
-        {videoDevices.length > 0 && (
-          <select
-            value={cameraDeviceId}
-            disabled={cameraBusy}
-            onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-              onCameraDeviceChange(e.target.value)
-            }
-            className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary disabled:opacity-40 focus:border-accent-yellow focus:outline-none"
-          >
-            <option value="">{t("goLive.camMic.defaultDevice")}</option>
-            {videoDevices.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label || `${t("goLive.camMic.camera")} ${d.deviceId.slice(0, 6)}`}
-              </option>
-            ))}
-          </select>
-        )}
-        {/* 本地预览框 — 始终挂载以便 attach, opacity 控制显隐 */}
+      {/* 横向布局: 左 = 摄像头小预览, 右 = 摄像头/麦克风控件 */}
+      <div className="flex gap-3 items-start">
+        {/* 摄像头本地预览 (小窗) — 始终挂载以便 attach, opacity 控制显隐 */}
         <div
-          className={`aspect-video bg-bg-primary border border-border-pixel overflow-hidden transition-opacity ${
+          className={`shrink-0 w-[200px] aspect-video bg-bg-primary border border-border-pixel overflow-hidden transition-opacity ${
             cameraEnabled && !cameraError ? "opacity-100" : "opacity-30"
           }`}
         >
@@ -2065,48 +2046,90 @@ function CameraMicPanel({
             className="w-full h-full object-cover"
           />
         </div>
-        {cameraError && (
-          <p className="text-[10px] text-accent-pink">⚠ {cameraError}</p>
-        )}
-      </div>
 
-      <div className="border-t border-border-pixel/30" />
+        {/* 控件区 — 摄像头 + 麦克风分两块 */}
+        <div className="flex-1 min-w-0 space-y-3">
+          {/* Camera row */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <ToggleButton
+                enabled={cameraEnabled}
+                disabled={cameraBusy}
+                onChange={onCameraToggle}
+              />
+              <span className="text-xs text-text-primary">
+                {t("goLive.camMic.camera")}
+              </span>
+              {cameraBusy && (
+                <span className="text-[10px] text-accent-yellow animate-pulse">
+                  {t("goLive.camMic.starting")}
+                </span>
+              )}
+            </div>
+            {/* device picker — 仅当用户开过摄像头(label 才有值)且设备数 ≥ 1 时显示 */}
+            {videoDevices.length > 0 && (
+              <select
+                value={cameraDeviceId}
+                disabled={cameraBusy}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  onCameraDeviceChange(e.target.value)
+                }
+                className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary disabled:opacity-40 focus:border-accent-yellow focus:outline-none"
+              >
+                <option value="">{t("goLive.camMic.defaultDevice")}</option>
+                {videoDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label ||
+                      `${t("goLive.camMic.camera")} ${d.deviceId.slice(0, 6)}`}
+                  </option>
+                ))}
+              </select>
+            )}
+            {cameraError && (
+              <p className="text-[10px] text-accent-pink">⚠ {cameraError}</p>
+            )}
+          </div>
 
-      {/* Microphone */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <ToggleButton
-            enabled={micEnabled}
-            disabled={micBusy}
-            onChange={onMicToggle}
-          />
-          <span className="text-xs text-text-primary">{t("goLive.camMic.microphone")}</span>
-          {micBusy && (
-            <span className="text-[10px] text-accent-yellow animate-pulse">
-              {t("goLive.camMic.starting")}
-            </span>
-          )}
+          {/* Mic row */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <ToggleButton
+                enabled={micEnabled}
+                disabled={micBusy}
+                onChange={onMicToggle}
+              />
+              <span className="text-xs text-text-primary">
+                {t("goLive.camMic.microphone")}
+              </span>
+              {micBusy && (
+                <span className="text-[10px] text-accent-yellow animate-pulse">
+                  {t("goLive.camMic.starting")}
+                </span>
+              )}
+            </div>
+            {audioDevices.length > 0 && (
+              <select
+                value={micDeviceId}
+                disabled={micBusy}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  onMicDeviceChange(e.target.value)
+                }
+                className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary disabled:opacity-40 focus:border-accent-yellow focus:outline-none"
+              >
+                <option value="">{t("goLive.camMic.defaultDevice")}</option>
+                {audioDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label ||
+                      `${t("goLive.camMic.microphone")} ${d.deviceId.slice(0, 6)}`}
+                  </option>
+                ))}
+              </select>
+            )}
+            {micError && (
+              <p className="text-[10px] text-accent-pink">⚠ {micError}</p>
+            )}
+          </div>
         </div>
-        {audioDevices.length > 0 && (
-          <select
-            value={micDeviceId}
-            disabled={micBusy}
-            onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-              onMicDeviceChange(e.target.value)
-            }
-            className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary disabled:opacity-40 focus:border-accent-yellow focus:outline-none"
-          >
-            <option value="">{t("goLive.camMic.defaultDevice")}</option>
-            {audioDevices.map((d) => (
-              <option key={d.deviceId} value={d.deviceId}>
-                {d.label || `${t("goLive.camMic.microphone")} ${d.deviceId.slice(0, 6)}`}
-              </option>
-            ))}
-          </select>
-        )}
-        {micError && (
-          <p className="text-[10px] text-accent-pink">⚠ {micError}</p>
-        )}
       </div>
     </div>
   );
