@@ -1053,14 +1053,10 @@ export default function WatchPage({
 
   return (
     <div className="ambient-gradient h-screen flex flex-col" data-player-root>
-      {/* Top bar */}
-      <div className="flex items-center justify-between h-11 px-3 sm:px-4 hud-panel shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link href="/" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity shrink-0">
-            <img src="/images/logo.png" alt="VibeLive" className="w-5 h-5" />
-            <span className="font-[family-name:var(--font-pixel)] text-[13px] tracking-widest glow-green text-accent-green">VIBELIVE</span>
-          </Link>
-          <span className="w-px h-4 bg-border-pixel/60 shrink-0" />
+      {/* Channel context bar (global Navbar already provides logo + nav) */}
+      <div className="flex items-center justify-between h-9 px-3 sm:px-4 hud-panel shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary/60 shrink-0">/watch/</span>
           <span className="text-sm text-text-primary truncate">
             {decodeURIComponent(roomName)}
           </span>
@@ -1199,17 +1195,10 @@ function OfflineChannelPage({ data }: { data: ChannelData }) {
 
   return (
     <div className="ambient-gradient min-h-screen">
-      {/* Top bar */}
-      <div className="hud-panel flex items-center gap-3 h-11 px-4 shrink-0">
-        <Link href="/" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/images/logo.png" alt="VibeLive" className="w-5 h-5" />
-          <span className="font-[family-name:var(--font-pixel)] text-[13px] tracking-widest glow-green text-accent-green">
-            VIBELIVE
-          </span>
-        </Link>
-        <span className="w-px h-4 bg-border-pixel/60" />
-        <span className="text-sm text-text-primary truncate">/watch/{channel.slug}</span>
+      {/* Channel context bar (global Navbar already provides logo + nav) */}
+      <div className="hud-panel flex items-center gap-2 h-9 px-4 shrink-0">
+        <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary/60 shrink-0">/watch/</span>
+        <span className="text-sm text-text-primary truncate">{channel.slug}</span>
         <div className="flex-1" />
         <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary/60">
           {t("channelPage.offline")}
