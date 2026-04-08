@@ -489,6 +489,11 @@ function Dashboard({
   );
   const committedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 封面上传/清除是原子动作 (不像打字), 完成后自动 commit streamInfo section.
+  // 这里只是个标记位 — 真正触发在下面的 useEffect 里, 等 draftChannel
+  // 状态更新后再调 commitSection (否则闭包里读的是旧 draft).
+  const pendingCoverCommitRef = useRef(false);
+
   // draftRef 给 LiveKit 异步回调读 quality 时用 (回调里需要最新值, 不通过 state)
   const draftRef = useRef(draftChannel);
   draftRef.current = draftChannel;
@@ -658,6 +663,17 @@ function Dashboard({
     },
     [draftChannel, savedChannel, setChannel]
   );
+
+  // 封面上传/清除完成后自动 commit streamInfo (复用现有的 commitSection 流程).
+  // 监听 draftChannel.thumbnail_url 而不是直接在 uploadCover 末尾调用,
+  // 是因为 setDraftChannel 是异步的, commitSection 闭包里读到的是旧 draft.
+  // 注: ref 兜住了非封面触发的 effect 重跑 (commitSection 每次按键都会
+  // 重建, 但 pendingCoverCommitRef 没置位时直接 early return).
+  useEffect(() => {
+    if (!pendingCoverCommitRef.current) return;
+    pendingCoverCommitRef.current = false;
+    commitSection("streamInfo");
+  }, [draftChannel.thumbnail_url, commitSection]);
 
   // ─ OBS: 加载或创建 ingress ─
   const loadIngress = useCallback(async (): Promise<IngressInfo | null> => {
@@ -1031,7 +1047,9 @@ function Dashboard({
       const {
         data: { publicUrl },
       } = supabase.storage.from("thumbnails").getPublicUrl(path);
-      // 只更新 draft, 用户必须显式点击 streamInfo 的"推送更新"才会发布给观众
+      // 封面是原子用户动作 (选完文件就完成了), 不像打字需要"推送更新".
+      // 标记 pending → patchDraft 触发 re-render → useEffect 自动 commit.
+      pendingCoverCommitRef.current = true;
       patchDraft({ thumbnail_url: publicUrl });
     } catch {
       setError("封面图上传失败");
@@ -1303,7 +1321,11 @@ function Dashboard({
                   url={draftChannel.thumbnail_url}
                   uploading={uploading}
                   onPick={uploadCover}
-                  onClear={() => patchDraft({ thumbnail_url: "" })}
+                  onClear={() => {
+                    // 同样走自动 commit (清除也是原子动作)
+                    pendingCoverCommitRef.current = true;
+                    patchDraft({ thumbnail_url: "" });
+                  }}
                 />
               </Field>
 
