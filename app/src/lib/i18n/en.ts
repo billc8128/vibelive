@@ -130,6 +130,7 @@ export const en: Record<TranslationKey, string> = {
   "profile.unknownUser": "Unknown User",
   "profile.followers": "Followers",
   "profile.following": "Following",
+  "profile.totalStreamTime": "Total Stream Time",
 
   // ── Achievements ──────────────────────────
   "achievement.first_watch.name": "First Watch",

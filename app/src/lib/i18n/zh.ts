@@ -128,6 +128,7 @@ export const zh = {
   "profile.unknownUser": "未知用户",
   "profile.followers": "粉丝",
   "profile.following": "关注",
+  "profile.totalStreamTime": "累计直播时长",
 
   // ── Achievements ──────────────────────────
   "achievement.first_watch.name": "初见",
