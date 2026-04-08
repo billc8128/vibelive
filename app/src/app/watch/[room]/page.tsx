@@ -13,26 +13,25 @@ import {
 import { Track, RoomEvent } from "livekit-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ChatMessageRow } from "@/components/watch/chat/ChatMessageRow";
 import { createClient } from "@/lib/supabase/client";
+import {
+  encodeRoomDataMessage,
+  parseRoomDataMessage,
+  type ChatTimelineMessage,
+} from "@/lib/chat/protocol";
 import { useNickname } from "@/lib/useNickname";
 import { useI18n } from "@/lib/i18n/context";
+import type { TranslationKey } from "@/lib/i18n/zh";
+import { isViewerParticipant } from "@/lib/participants";
 import {
   ReactionOverlay,
   useReactionSystem,
   REACTION_CONFIG,
   type ReactionKind,
   type OverlayBurst,
-  type ComboTier,
   type ComboState,
 } from "@/components/ReactionOverlay";
-
-// ── Types ────────────────────────────────────
-interface ChatMsg {
-  id: string;
-  user: string;
-  text: string;
-  time: number;
-}
 
 type LayoutMode = "theater" | "default" | "fullscreen";
 
@@ -72,16 +71,14 @@ interface ChannelData {
 }
 
 const CHAT_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 // ── Player Controls ──────────────────────────
 function PlayerControls({
-  videoEl,
+  videoRef,
   layoutMode,
   onLayoutChange,
 }: {
-  videoEl: HTMLVideoElement | null;
+  videoRef: { current: HTMLVideoElement | null };
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
 }) {
@@ -118,26 +115,30 @@ function PlayerControls({
   }, []);
 
   const togglePause = () => {
-    if (!videoEl) return;
-    if (videoEl.paused) {
-      videoEl.play();
+    const player = videoRef.current;
+    if (!player) return;
+    if (player.paused) {
+      player.play();
       setPaused(false);
     } else {
-      videoEl.pause();
+      player.pause();
       setPaused(true);
     }
   };
 
   const toggleMute = () => {
-    if (!videoEl) return;
-    videoEl.muted = !videoEl.muted;
-    setMuted(videoEl.muted);
+    const player = videoRef.current;
+    if (!player) return;
+    const nextMuted = !player.muted;
+    player.muted = nextMuted;
+    setMuted(nextMuted);
   };
 
   const changeVolume = (v: number) => {
-    if (!videoEl) return;
-    videoEl.volume = v / 100;
-    videoEl.muted = v === 0;
+    const player = videoRef.current;
+    if (!player) return;
+    player.volume = v / 100;
+    player.muted = v === 0;
     setVolume(v);
     setMuted(v === 0);
   };
@@ -288,9 +289,8 @@ function VideoArea({
     { onlySubscribed: true }
   );
   const participants = useParticipants();
-  // 真实观众数 = 排除有 publish 权限的 participant (主播自己 + OBS ingress 虚拟参与者)
-  const viewerCount = participants.filter((p) => !p.permissions?.canPublish).length;
-  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const viewerCount = participants.filter(isViewerParticipant).length;
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const screenTrack =
     tracks.find((tr) => tr.source === Track.Source.ScreenShare) ||
@@ -300,9 +300,9 @@ function VideoArea({
   const videoContainerRef = useCallback((node: HTMLDivElement | null) => {
     if (node) {
       const vid = node.querySelector("video");
-      if (vid) setVideoEl(vid);
+      if (vid) videoRef.current = vid;
     }
-  }, [screenTrack]);
+  }, []);
 
   if (!screenTrack) {
     return (
@@ -341,7 +341,11 @@ function VideoArea({
       </div>
 
       {/* Player controls */}
-      <PlayerControls videoEl={videoEl} layoutMode={layoutMode} onLayoutChange={onLayoutChange} />
+      <PlayerControls
+        videoRef={videoRef}
+        layoutMode={layoutMode}
+        onLayoutChange={onLayoutChange}
+      />
     </div>
   );
 }
@@ -356,8 +360,6 @@ const STAGES_DATA = [
   { value: "发布中", labelKey: "goLive.stage.deploy" },
   { value: "已完成", labelKey: "goLive.stage.done" },
 ];
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 function Sidebar({ viewerName, roomName, addReaction, combo }: {
   viewerName: string;
@@ -368,18 +370,16 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   const { t } = useI18n();
   const room = useRoomContext();
   const participants = useParticipants();
-  // 真正的"观众" = 没有 publish 权限的 participant.
-  // 排除掉主播自己 (有 canPublish) 以及 OBS ingress 虚拟参与者 obs-{slug}.
-  const viewers = participants.filter((p) => !p.permissions?.canPublish);
+  const viewers = participants.filter(isViewerParticipant);
   const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
   const chatStorageKey = `vibelive-chat-${decodedRoom}`;
-  const [messages, setMessages] = useState<ChatMsg[]>(() => {
+  const [messages, setMessages] = useState<ChatTimelineMessage[]>(() => {
     if (typeof window === "undefined") return [];
     try {
       const raw = localStorage.getItem(chatStorageKey);
       if (!raw) return [];
-      const saved: ChatMsg[] = JSON.parse(raw);
+      const saved: ChatTimelineMessage[] = JSON.parse(raw);
       const cutoff = Date.now() - CHAT_TTL_MS;
       return saved.filter((m) => m.time > cutoff).slice(-200);
     } catch {
@@ -415,7 +415,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
         setSaving(false);
       }, 600);
     },
-    [roomName, isStreamer]
+    [decodedRoom, isStreamer]
   );
 
   const updateField = (key: string, value: string) => {
@@ -457,29 +457,35 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
     fetchInfo();
     const interval = setInterval(fetchInfo, 15000);
     return () => clearInterval(interval);
-  }, [roomName]);
+  }, [decodedRoom]);
 
   // Data channel messages — skip messages from self (already added locally in sendChat/sendReaction)
   useEffect(() => {
     const handleData = (payload: Uint8Array, participant?: { identity: string }) => {
       if (participant?.identity === room.localParticipant.identity) return;
-      try {
-        const msg = JSON.parse(textDecoder.decode(payload));
-        if (msg.type === "chat") {
-          setMessages((prev) => [
-            ...prev.slice(-200),
-            { id: `${Date.now()}-${Math.random()}`, user: msg.user, text: String(msg.text).slice(0, 500), time: Date.now() },
-          ]);
-        } else if (msg.type === "reaction") {
-          const kind = msg.kind as ReactionKind;
-          if (!REACTION_CONFIG[kind]) return;
-          addReaction(kind);
-        }
-      } catch {}
+      const msg = parseRoomDataMessage(payload);
+      if (!msg) return;
+      if (msg.type === "chat") {
+        setMessages((prev) => [
+          ...prev.slice(-200),
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            user: msg.user,
+            text: msg.text.slice(0, 500),
+            time: Date.now(),
+            bot: msg.bot,
+            botPersona: msg.botPersona,
+          },
+        ]);
+      } else if (msg.type === "reaction") {
+        const kind = msg.kind as ReactionKind;
+        if (!REACTION_CONFIG[kind]) return;
+        addReaction(kind);
+      }
     };
     room.on(RoomEvent.DataReceived, handleData);
     return () => { room.off(RoomEvent.DataReceived, handleData); };
-  }, [room]);
+  }, [addReaction, room]);
 
   // Persist messages to localStorage (keep only last 10 min)
   useEffect(() => {
@@ -497,7 +503,11 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   const sendChat = () => {
     const text = input.trim();
     if (!text) return;
-    const payload = textEncoder.encode(JSON.stringify({ type: "chat", user: viewerName, text }));
+    const payload = encodeRoomDataMessage({
+      type: "chat",
+      user: viewerName,
+      text,
+    });
     room.localParticipant.publishData(payload, { reliable: true });
     setMessages((prev) => [
       ...prev.slice(-200),
@@ -507,7 +517,11 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   };
 
   const sendReaction = (kind: ReactionKind) => {
-    const payload = textEncoder.encode(JSON.stringify({ type: "reaction", kind, user: viewerName }));
+    const payload = encodeRoomDataMessage({
+      type: "reaction",
+      kind,
+      user: viewerName,
+    });
     room.localParticipant.publishData(payload, { reliable: true });
     addReaction(kind);
   };
@@ -569,12 +583,11 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
               <p className="text-xs text-text-secondary/40 text-center py-8">还没有消息，说点什么吧</p>
             )}
             {messages.map((msg) => (
-              <div key={msg.id} className="text-xs">
-                <span className="text-text-secondary/40 mr-1.5 text-[10px]">{formatTime(msg.time)}</span>
-                <span className="text-accent-cyan font-medium">{msg.user}</span>
-                <span className="text-text-secondary mx-1">:</span>
-                <span className="text-text-primary">{msg.text}</span>
-              </div>
+              <ChatMessageRow
+                key={msg.id}
+                message={msg}
+                timestampLabel={formatTime(msg.time)}
+              />
             ))}
           </div>
 
@@ -706,7 +719,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
                             : "border-border-pixel text-text-secondary hover:border-text-secondary"
                         }`}
                       >
-                        {t(s.labelKey as any)}
+                        {t(s.labelKey as TranslationKey)}
                       </button>
                     ))}
                   </div>
@@ -716,7 +729,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
                       {(() => {
                         const stageValue = streamInfo.stage || "构思中";
                         const match = STAGES_DATA.find(s => s.value === stageValue);
-                        return match ? t(match.labelKey as any) : stageValue;
+                        return match ? t(match.labelKey as TranslationKey) : stageValue;
                       })()}
                     </span>
                   </p>
@@ -1079,9 +1092,6 @@ export default function WatchPage({
       </div>
     );
   }
-
-  // Watching
-  const isTheater = layoutMode === "theater";
 
   return (
     <div className="ambient-gradient h-screen flex flex-col" data-player-root>
