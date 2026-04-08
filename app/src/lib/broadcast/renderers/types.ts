@@ -1,4 +1,4 @@
-import type { TransformBox } from "../sources";
+import type { Source, TransformBox } from "../sources";
 import type { TrackingInputs } from "../vtube-config";
 
 // ────────────────────────────────────────────────────────────────
@@ -34,4 +34,12 @@ export interface SourceRenderer {
    * 广播给所有 renderer; 不需要追踪的 renderer (camera/screen) 不实现.
    */
   onTrackingInputs?(inputs: TrackingInputs): void;
+
+  /**
+   * 可选 — Compositor 在 updateScene 时把"已存在 source 的最新数据"
+   * 推给 renderer. 用于 renderer 响应 source 字段变化 (e.g. Live2D 的
+   * activeExpression 切换). transform 已经在 draw 里逐帧拿到了, 这个
+   * hook 主要给非 transform 的字段用.
+   */
+  onSourceUpdate?(source: Source): void;
 }

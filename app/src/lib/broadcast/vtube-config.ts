@@ -33,9 +33,29 @@ export interface VtubeMapping {
   clampOutput: boolean;
 }
 
+export interface VtubeHotkey {
+  /** UUID 串, .vtube.json 的 HotkeyID, 用于稳定 React key */
+  id: string;
+  /** 显示名 (e.g. "照れ/shame", "リセット/reset") */
+  name: string;
+  /**
+   * VTube Studio 行为类型. 我们目前只支持:
+   *   - "ToggleExpression"     → 应用 file 指向的 .exp3.json
+   *   - "RemoveAllExpressions" → 清空当前表情
+   * 其他 (动作播放, 物品 spawn, 颜色叠加 ...) 静默忽略.
+   */
+  action: "ToggleExpression" | "RemoveAllExpressions" | "Other";
+  /** .exp3.json 的相对文件名 (空字符串 = 此 hotkey 没有文件) */
+  file: string;
+  /** 子目录 (空字符串 = 跟 .vtube.json 同目录, 但实际文件可能在 animetions/) */
+  folder: string;
+}
+
 export interface VtubeConfig {
   name: string;
   mappings: VtubeMapping[];
+  /** 仅保留我们认得的 hotkey: ToggleExpression / RemoveAllExpressions. */
+  hotkeys: VtubeHotkey[];
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -55,9 +75,18 @@ interface RawParameterSetting {
   ClampOutput?: boolean;
 }
 
+interface RawHotkey {
+  HotkeyID?: string;
+  Name?: string;
+  Action?: string;
+  File?: string;
+  Folder?: string;
+}
+
 interface RawVtubeJson {
   Name?: string;
   ParameterSettings?: RawParameterSetting[];
+  Hotkeys?: RawHotkey[];
 }
 
 export async function loadVtubeConfig(url: string): Promise<VtubeConfig> {
@@ -84,9 +113,39 @@ export async function loadVtubeConfig(url: string): Promise<VtubeConfig> {
       clampOutput: Boolean(e.ClampOutput),
     }));
 
+  // Hotkeys — 仅保留 ToggleExpression / RemoveAllExpressions, 其他类型忽略.
+  // 注意 ToggleExpression 必须有 file (否则无意义), Reset 类的 file 是空的.
+  const rawHotkeys: RawHotkey[] = Array.isArray(json.Hotkeys) ? json.Hotkeys : [];
+  const hotkeys: VtubeHotkey[] = rawHotkeys
+    .map((h): VtubeHotkey | null => {
+      const action = String(h.Action ?? "");
+      if (action === "ToggleExpression") {
+        if (!h.File) return null; // 没文件就跳过
+        return {
+          id: String(h.HotkeyID ?? ""),
+          name: String(h.Name ?? "expression"),
+          action: "ToggleExpression",
+          file: String(h.File),
+          folder: String(h.Folder ?? ""),
+        };
+      }
+      if (action === "RemoveAllExpressions") {
+        return {
+          id: String(h.HotkeyID ?? ""),
+          name: String(h.Name ?? "reset"),
+          action: "RemoveAllExpressions",
+          file: "",
+          folder: "",
+        };
+      }
+      return null;
+    })
+    .filter((h): h is VtubeHotkey => h !== null);
+
   return {
     name: String(json.Name ?? ""),
     mappings,
+    hotkeys,
   };
 }
 

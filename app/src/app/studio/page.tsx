@@ -7,6 +7,7 @@ import {
   sceneReducer,
 } from "@/lib/broadcast/scene";
 import { createLive2DSource } from "@/lib/broadcast/sources";
+import { DEFAULT_LIVE2D_MODEL } from "@/lib/broadcast/model-registry";
 import { SourceList } from "@/components/studio/SourceList";
 import { SourceInspector } from "@/components/studio/SourceInspector";
 import { AddSourceMenu } from "@/components/studio/AddSourceMenu";
@@ -36,16 +37,17 @@ const SceneCanvas = dynamic(
 // ────────────────────────────────────────────────────────────────
 
 function makeInitialScene() {
-  // 默认放 saba1B (从 VTube Studio 复制到 public/live2d/), 让用户访问 /studio
-  // 立刻看到真 Live2D 模型. Phase 3a 起也带上 .vtube.json,
-  // 使能"启用面捕"按钮一开就能驱动头部+眼+嘴.
+  // 默认放 registry 里的第一个模型 (Phase 3b: saba1B). 让用户访问 /studio
+  // 立刻看到真 Live2D 模型 + 自带 .vtube.json — "启用面捕"开关一开就能用,
+  // 表情面板也会自动填充 hotkeys.
   const scene = createEmptyScene();
+  const m = DEFAULT_LIVE2D_MODEL;
   scene.sources.push(
     createLive2DSource({
-      name: "saba1B",
-      avatarId: "saba1B",
-      modelUrl: "/live2d/saba1B/saba1B.model3.json",
-      vtubeConfigUrl: "/live2d/saba1B/saba1B.vtube.json",
+      name: m.name,
+      avatarId: m.avatarId,
+      modelUrl: m.modelUrl,
+      vtubeConfigUrl: m.vtubeConfigUrl,
     })
   );
   return scene;
@@ -69,7 +71,7 @@ export default function StudioPage() {
           </span>
           <div className="flex-1 h-px bg-gradient-to-r from-accent-purple/40 to-transparent" />
           <span className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary opacity-50">
-            phase 3a · 合成预览 + 真 live2d + 面捕 · 未推流
+            phase 3b · 面捕 + 表情触发 + 模型注册表 · 未推流
           </span>
         </div>
 
@@ -126,6 +128,15 @@ export default function StudioPage() {
                   setFaceTracking(false);
                   setFaceTrackErr(err.message);
                 }}
+                onLive2DReady={(id, hotkeys) => {
+                  // .vtube.json 解析完成 — 把 hotkeys 写回 source state,
+                  // SourceInspector 用它渲染表情按钮
+                  dispatch({
+                    type: "updateSource",
+                    id,
+                    patch: { hotkeys },
+                  });
+                }}
               />
             </div>
             {faceTrackErr ? (
@@ -149,12 +160,12 @@ export default function StudioPage() {
           </div>
         </div>
 
-        {/* ── Footer / Phase 3b hint ─────────────── */}
+        {/* ── Footer / Phase 3c hint ─────────────── */}
         <div className="mt-8 pixel-border bg-bg-card/50 p-4">
           <p className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary leading-relaxed">
-            ◇ Phase 3b 待做: 表情触发 (.exp3.json) · 多模型选择器 ·
-            模型迁移到 Vercel Blob · canvas.captureStream → LiveKit publishTrack ·
-            react-moveable 拖拽手柄
+            ◇ Phase 3c 待做: canvas.captureStream → LiveKit publishTrack ·
+            react-moveable 拖拽手柄 · 模型迁移到 Vercel Blob ·
+            自定义 model URL 加载入口
           </p>
         </div>
       </div>

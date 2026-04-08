@@ -94,6 +94,57 @@ export function SourceInspector({ scene, dispatch }: SourceInspectorProps) {
               占位 renderer · 修改皮套 ID 会换一个色调
             </p>
           )}
+
+          {/* 表情面板 — hotkeys 由 Compositor.onLive2DReady 异步填充 */}
+          {source.hotkeys && source.hotkeys.length > 0 && (
+            <div className="pt-1">
+              <label className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mb-1">
+                表情 · Expressions
+              </label>
+              <div className="grid grid-cols-2 gap-1">
+                {source.hotkeys.map((hk) => {
+                  const isActive =
+                    hk.action === "ToggleExpression" &&
+                    source.activeExpression === hk.file;
+                  const isReset = hk.action === "RemoveAllExpressions";
+                  return (
+                    <button
+                      key={hk.id || hk.file || hk.name}
+                      type="button"
+                      onClick={() =>
+                        dispatch({
+                          type: "updateSource",
+                          id: source.id,
+                          patch: {
+                            activeExpression: isReset
+                              ? null
+                              : isActive
+                                ? null // 再点一次 = 取消 (toggle)
+                                : hk.file,
+                          },
+                        })
+                      }
+                      className={`pixel-border px-1.5 py-1 text-[10px] truncate transition-colors ${
+                        isActive
+                          ? "bg-accent-yellow/20 text-accent-yellow"
+                          : isReset
+                            ? "bg-bg-card text-text-secondary hover:bg-accent-red/10 hover:text-accent-red"
+                            : "bg-bg-card text-text-secondary hover:bg-accent-yellow/10 hover:text-accent-yellow"
+                      }`}
+                      title={hk.name}
+                    >
+                      {hk.name}
+                    </button>
+                  );
+                })}
+              </div>
+              {source.activeExpression && (
+                <p className="text-[10px] text-accent-yellow/70 mt-1 truncate">
+                  当前: {source.activeExpression}
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 

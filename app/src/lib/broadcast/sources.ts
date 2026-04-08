@@ -40,6 +40,20 @@ export interface ScreenSource extends BaseSource {
   // getDisplayMedia 选什么屏 / 窗口是用户运行时选的,不需要持久字段
 }
 
+/**
+ * Live2D source 的表情 hotkey (从 .vtube.json 解析). 在 renderer 加载完
+ * .vtube.json 后由 Compositor.onLive2DReady 回调写回 scene state, UI 用
+ * 它渲染按钮列表.
+ */
+export interface Live2DHotkey {
+  id: string;
+  name: string;
+  /** ToggleExpression / RemoveAllExpressions */
+  action: "ToggleExpression" | "RemoveAllExpressions" | "Other";
+  /** .exp3.json 文件名 (RemoveAllExpressions 时为空) */
+  file: string;
+}
+
 export interface Live2DSource extends BaseSource {
   type: "live2d";
   /** 预置 avatar 的标识符 (可显示在 UI), e.g. "saba1B" / "default" */
@@ -60,6 +74,16 @@ export interface Live2DSource extends BaseSource {
    * 通过它定义的 ParameterSettings 写入模型.
    */
   vtubeConfigUrl?: string;
+  /**
+   * 表情 hotkey 列表 — renderer 加载完 .vtube.json 后由 Compositor
+   * 通过 onLive2DReady 回调写入. UI 渲染表情按钮用.
+   */
+  hotkeys?: Live2DHotkey[];
+  /**
+   * 当前激活的表情 .exp3.json 文件名. null/undefined = 无表情.
+   * UI 点击 hotkey 按钮时写入, renderer 在 onSourceUpdate 里响应.
+   */
+  activeExpression?: string | null;
 }
 
 export interface ImageSource extends BaseSource {

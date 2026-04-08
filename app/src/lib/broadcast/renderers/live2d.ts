@@ -1,13 +1,15 @@
 import { Application, Ticker } from "pixi.js";
 import { Live2DModel } from "pixi-live2d-display-lipsyncpatch/cubism4";
-import type { TransformBox } from "../sources";
+import type { Source, TransformBox } from "../sources";
 import type { SourceRenderer } from "./types";
 import { loadCubismCore } from "../cubism-loader";
 import {
   loadVtubeConfig,
   VtubeApplier,
   type TrackingInputs,
+  type VtubeHotkey,
 } from "../vtube-config";
+import { ExpressionApplier } from "../expression-applier";
 
 // ────────────────────────────────────────────────────────────────
 // 真 Live2D renderer (Cubism 4 / VTube Studio 模型)
@@ -72,13 +74,32 @@ export class Live2DRenderer implements SourceRenderer {
   private modelUrl: string;
   private vtubeConfigUrl: string | undefined;
   private applier: VtubeApplier | null = null;
+  private expressions: ExpressionApplier | null = null;
+  /** 表情文件查找用的 baseUrl 列表 — saba1B 的 exp 在 animetions/, 兼容多布局 */
+  private expressionBaseUrls: string[] = [];
+  /** 当前 source 的 activeExpression 字段, 用于 dedup 切换 */
+  private currentExpressionName: string | null = null;
   private latestInputs: TrackingInputs | null = null;
   private beforeUpdateHandler: (() => void) | null = null;
+  private lastFrameTime = 0;
+  private onHotkeysReady: ((hotkeys: VtubeHotkey[]) => void) | undefined;
   private _ready = false;
 
-  constructor(opts: { modelUrl: string; vtubeConfigUrl?: string }) {
+  constructor(opts: {
+    modelUrl: string;
+    vtubeConfigUrl?: string;
+    onHotkeysReady?: (hotkeys: VtubeHotkey[]) => void;
+  }) {
     this.modelUrl = opts.modelUrl;
     this.vtubeConfigUrl = opts.vtubeConfigUrl;
+    this.onHotkeysReady = opts.onHotkeysReady;
+
+    // 表情文件查找的 baseUrl: 跟 .vtube.json 同目录, 以及 animetions/ 子目录
+    if (opts.vtubeConfigUrl) {
+      const lastSlash = opts.vtubeConfigUrl.lastIndexOf("/");
+      const dir = lastSlash >= 0 ? opts.vtubeConfigUrl.slice(0, lastSlash) : "";
+      this.expressionBaseUrls = [`${dir}/animetions`, dir];
+    }
   }
 
   get ready() {
@@ -146,20 +167,34 @@ export class Live2DRenderer implements SourceRenderer {
 
     this.model = model;
 
-    // 7. 等 vtube config 完成 → 构造 applier + hook update
+    // 7. 等 vtube config 完成 → 构造 applier + expression applier + hook update
     const config = await configPromise;
     if (config) {
       this.applier = new VtubeApplier(config);
+      this.expressions = new ExpressionApplier();
+
       const internal = (model as unknown as Live2DModelLike).internalModel;
       const handler = () => {
-        if (!this.applier || !this.latestInputs) return;
-        this.applier.apply(internal.coreModel, this.latestInputs);
+        const now = performance.now();
+        const dtMs = this.lastFrameTime === 0 ? 16 : now - this.lastFrameTime;
+        this.lastFrameTime = now;
+
+        // 1) face tracking 先写
+        if (this.applier && this.latestInputs) {
+          this.applier.apply(internal.coreModel, this.latestInputs);
+        }
+        // 2) expression 后写 → 表情参数覆盖追踪 (与 VTS 一致)
+        this.expressions?.apply(internal.coreModel, dtMs);
       };
       internal.on("beforeModelUpdate", handler);
       this.beforeUpdateHandler = handler;
+
       console.log(
-        `[live2d] vtube 配置就绪: ${config.mappings.length} 个参数映射`
+        `[live2d] vtube 配置就绪: ${config.mappings.length} mapping, ${config.hotkeys.length} hotkey`
       );
+
+      // 推送 hotkeys 给 React (UI 渲染按钮)
+      this.onHotkeysReady?.(config.hotkeys);
     }
 
     this._ready = true;
@@ -168,6 +203,19 @@ export class Live2DRenderer implements SourceRenderer {
   /** Compositor 把 face tracker 的最新 inputs 推过来. */
   onTrackingInputs(inputs: TrackingInputs): void {
     this.latestInputs = inputs;
+  }
+
+  /** Compositor 在 updateScene 时推 source 的最新数据 — 监听 activeExpression 变化. */
+  onSourceUpdate(source: Source): void {
+    if (source.type !== "live2d") return;
+    if (!this.expressions) return;
+    const next = source.activeExpression ?? null;
+    if (next === this.currentExpressionName) return;
+    this.currentExpressionName = next;
+    // setActive 是 fire-and-forget — 内部 fetch + cache + fade
+    this.expressions.setActive(this.expressionBaseUrls, next).catch((e) => {
+      console.warn("[live2d] expression load failed:", e);
+    });
   }
 
   draw(ctx: CanvasRenderingContext2D, box: TransformBox): void {
@@ -200,6 +248,9 @@ export class Live2DRenderer implements SourceRenderer {
       this.beforeUpdateHandler = null;
     }
     this.applier = null;
+    this.expressions?.reset();
+    this.expressions = null;
+    this.currentExpressionName = null;
     this.latestInputs = null;
 
     if (this.model) {

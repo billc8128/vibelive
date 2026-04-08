@@ -5,7 +5,7 @@ import { CameraRenderer } from "./renderers/camera";
 import { ScreenRenderer } from "./renderers/screen";
 import { Live2DPlaceholderRenderer } from "./renderers/live2d-placeholder";
 import { Live2DRenderer } from "./renderers/live2d";
-import type { TrackingInputs } from "./vtube-config";
+import type { TrackingInputs, VtubeHotkey } from "./vtube-config";
 
 // ────────────────────────────────────────────────────────────────
 // Compositor — Scene → Canvas frame.
@@ -32,6 +32,11 @@ export interface CompositorEvents {
   onSourceError?: (sourceId: string, error: Error) => void;
   /** 屏幕共享被用户主动停止 */
   onScreenEnded?: (sourceId: string) => void;
+  /**
+   * Live2D source 的 .vtube.json 解析完成 — 把 hotkeys 推给 React,
+   * UI 可以渲染 expression 按钮列表. 没有 vtubeConfigUrl 的 source 不触发.
+   */
+  onLive2DReady?: (sourceId: string, hotkeys: VtubeHotkey[]) => void;
 }
 
 export class Compositor {
@@ -127,9 +132,10 @@ export class Compositor {
       }
     }
 
-    // 2. init 新增的
+    // 2. init 新增的, 同步推送 source 字段更新给已存在的
     for (const source of scene.sources) {
-      if (!this.renderers.has(source.id)) {
+      const existing = this.renderers.get(source.id);
+      if (!existing) {
         const renderer = this.createRendererFor(source);
         this.renderers.set(source.id, renderer);
         // init 是 async, 不阻塞循环 — renderer.ready 在 init 完成前是 false
@@ -139,6 +145,9 @@ export class Compositor {
           try { renderer.dispose(); } catch {}
           this.renderers.delete(source.id);
         });
+      } else {
+        // 已存在 — 推 source 字段变化 (e.g. Live2D activeExpression 切换)
+        existing.onSourceUpdate?.(source);
       }
     }
   }
@@ -159,6 +168,8 @@ export class Compositor {
           return new Live2DRenderer({
             modelUrl: source.modelUrl,
             vtubeConfigUrl: source.vtubeConfigUrl,
+            onHotkeysReady: (hotkeys) =>
+              this.events.onLive2DReady?.(source.id, hotkeys),
           });
         }
         return new Live2DPlaceholderRenderer({ avatarId: source.avatarId });

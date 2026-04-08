@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Scene } from "@/lib/broadcast/scene";
+import type { Live2DHotkey } from "@/lib/broadcast/sources";
 import { Compositor } from "@/lib/broadcast/compositor";
 import { faceTracker } from "@/lib/broadcast/face-tracker";
 
@@ -32,6 +33,8 @@ interface SceneCanvasProps {
   onScreenEnded?: (sourceId: string) => void;
   /** 面部追踪启动失败 (用户拒绝授权 / 模型加载失败 等) */
   onFaceTrackingError?: (error: Error) => void;
+  /** Live2D source 加载完 .vtube.json — 把 hotkeys 推回 React state */
+  onLive2DReady?: (sourceId: string, hotkeys: Live2DHotkey[]) => void;
 }
 
 export function SceneCanvas({
@@ -41,6 +44,7 @@ export function SceneCanvas({
   onSourceError,
   onScreenEnded,
   onFaceTrackingError,
+  onLive2DReady,
 }: SceneCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const compositorRef = useRef<Compositor | null>(null);
@@ -50,10 +54,12 @@ export function SceneCanvas({
   const errCbRef = useRef(onSourceError);
   const endedCbRef = useRef(onScreenEnded);
   const faceErrCbRef = useRef(onFaceTrackingError);
+  const live2dReadyCbRef = useRef(onLive2DReady);
   useEffect(() => {
     errCbRef.current = onSourceError;
     endedCbRef.current = onScreenEnded;
     faceErrCbRef.current = onFaceTrackingError;
+    live2dReadyCbRef.current = onLive2DReady;
   });
 
   // 启动 / 销毁 compositor (仅 mount/unmount)
@@ -69,6 +75,7 @@ export function SceneCanvas({
     const compositor = new Compositor({
       onSourceError: (id, err) => errCbRef.current?.(id, err),
       onScreenEnded: (id) => endedCbRef.current?.(id),
+      onLive2DReady: (id, hotkeys) => live2dReadyCbRef.current?.(id, hotkeys),
     });
     compositor.start(canvas, initialSceneRef.current);
     compositorRef.current = compositor;
