@@ -194,6 +194,12 @@ export const en: Record<TranslationKey, string> = {
   "goLive.section.tech": "Technical",
   "goLive.section.chat": "Chat / Interaction",
   "goLive.section.preview": "Preview",
+  "goLive.section.camMic": "Camera / Microphone",
+  "goLive.camMic.live": "Live control",
+  "goLive.camMic.camera": "Camera",
+  "goLive.camMic.microphone": "Microphone",
+  "goLive.camMic.starting": "Starting...",
+  "goLive.camMic.defaultDevice": "Default device",
 
   "goLive.streamTitle": "Stream Title",
   "goLive.streamTitleRequired": "Stream Title (required)",
