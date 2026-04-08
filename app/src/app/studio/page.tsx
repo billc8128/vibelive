@@ -25,6 +25,15 @@ const SceneCanvas = dynamic(
   { ssr: false }
 );
 
+// react-moveable 同样在模块顶层访问 window — dynamic + ssr:false
+const SourceMoveableOverlay = dynamic(
+  () =>
+    import("@/components/studio/SourceMoveableOverlay").then(
+      (m) => m.SourceMoveableOverlay
+    ),
+  { ssr: false }
+);
+
 // ────────────────────────────────────────────────────────────────
 // /studio — 直播工作室
 //
@@ -118,7 +127,7 @@ export default function StudioPage() {
           </span>
           <div className="flex-1 h-px bg-gradient-to-r from-accent-purple/40 to-transparent" />
           <span className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary opacity-50">
-            phase 3c · livekit publish 已接通
+            phase 3d · livekit publish + 拖拽手柄
           </span>
         </div>
 
@@ -211,7 +220,7 @@ export default function StudioPage() {
                 {faceTracking ? "● 面捕已启用" : "○ 启用面捕"}
               </button>
             </div>
-            <div className="pixel-border-glow bg-bg-card p-2">
+            <div className="pixel-border-glow bg-bg-card p-2 relative">
               <SceneCanvas
                 scene={scene}
                 canvasRef={canvasRef}
@@ -239,6 +248,12 @@ export default function StudioPage() {
                   });
                 }}
               />
+              {/* 拖拽 / 调整大小 overlay — 直接在 canvas 上操作 source */}
+              <SourceMoveableOverlay
+                scene={scene}
+                dispatch={dispatch}
+                canvasRef={canvasRef}
+              />
             </div>
             {faceTrackErr ? (
               <p className="text-[10px] text-accent-red/80 px-1 leading-relaxed">
@@ -261,11 +276,11 @@ export default function StudioPage() {
           </div>
         </div>
 
-        {/* ── Footer / Phase 3d hint ─────────────── */}
+        {/* ── Footer / Phase 3e hint ─────────────── */}
         <div className="mt-8 pixel-border bg-bg-card/50 p-4">
           <p className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary leading-relaxed">
-            ◇ Phase 3d 待做: react-moveable 拖拽手柄 ·
-            模型迁移到 Vercel Blob · 自定义 model URL 加载入口 ·
+            ◇ Phase 3e 待做: 模型迁移到 Vercel Blob (saba1B 15MB git
+            膨胀) · 加 hiyori_vts 等明星模型 · 自定义 model URL 加载入口 ·
             麦克风音频开关
           </p>
         </div>
