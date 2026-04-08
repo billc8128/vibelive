@@ -1,4 +1,5 @@
 import type { TransformBox } from "../sources";
+import type { TrackingInputs } from "../vtube-config";
 
 // ────────────────────────────────────────────────────────────────
 // Unified renderer interface.
@@ -27,4 +28,10 @@ export interface SourceRenderer {
 
   /** Renderer 是否已就绪 (init 完成). draw 在 ready=false 时应该空操作或画占位. */
   readonly ready: boolean;
+
+  /**
+   * 可选 — face tracker 推送 VTS-命名的 inputs. Compositor 把 inputs
+   * 广播给所有 renderer; 不需要追踪的 renderer (camera/screen) 不实现.
+   */
+  onTrackingInputs?(inputs: TrackingInputs): void;
 }

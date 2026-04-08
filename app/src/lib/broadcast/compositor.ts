@@ -5,6 +5,7 @@ import { CameraRenderer } from "./renderers/camera";
 import { ScreenRenderer } from "./renderers/screen";
 import { Live2DPlaceholderRenderer } from "./renderers/live2d-placeholder";
 import { Live2DRenderer } from "./renderers/live2d";
+import type { TrackingInputs } from "./vtube-config";
 
 // ────────────────────────────────────────────────────────────────
 // Compositor — Scene → Canvas frame.
@@ -83,6 +84,17 @@ export class Compositor {
     this.diffAndUpdate(scene);
   }
 
+  /**
+   * 把 face tracker 推送的 VTS-命名 inputs 广播给所有 renderer.
+   * 不需要追踪的 renderer (camera/screen) 没实现 onTrackingInputs, 自动跳过.
+   * 这个 method 一秒可能被调 30~60 次, 实现要尽量便宜.
+   */
+  setTrackingInputs(inputs: TrackingInputs): void {
+    for (const r of this.renderers.values()) {
+      r.onTrackingInputs?.(inputs);
+    }
+  }
+
   /** 停止循环, dispose 所有 renderer, 完全释放硬件. */
   stop(): void {
     if (this.rafId !== null) {
@@ -144,7 +156,10 @@ export class Compositor {
         // 有 modelUrl → 真 PIXI + Cubism Core 渲染
         // 没 modelUrl (空字符串) → 占位 renderer (anime 头像 + idle bob)
         if (source.modelUrl) {
-          return new Live2DRenderer({ modelUrl: source.modelUrl });
+          return new Live2DRenderer({
+            modelUrl: source.modelUrl,
+            vtubeConfigUrl: source.vtubeConfigUrl,
+          });
         }
         return new Live2DPlaceholderRenderer({ avatarId: source.avatarId });
       case "image":

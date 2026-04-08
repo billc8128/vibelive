@@ -54,6 +54,12 @@ export interface Live2DSource extends BaseSource {
    *   "https://cdn.example.com/.../foo.model3.json"  (生产 CDN)
    */
   modelUrl: string;
+  /**
+   * VTube Studio 的 .vtube.json 配置文件 URL. 可选 — 没有就走纯
+   * Cubism 4 默认行为 (无面捕参数映射). 有就让 face tracker 的输入
+   * 通过它定义的 ParameterSettings 写入模型.
+   */
+  vtubeConfigUrl?: string;
 }
 
 export interface ImageSource extends BaseSource {
@@ -119,7 +125,11 @@ export function createScreenSource(
 }
 
 export function createLive2DSource(
-  opts: NewSourceOptions & { avatarId?: string; modelUrl?: string } = {}
+  opts: NewSourceOptions & {
+    avatarId?: string;
+    modelUrl?: string;
+    vtubeConfigUrl?: string;
+  } = {}
 ): Live2DSource {
   return {
     id: nextId("l2d"),
@@ -129,6 +139,7 @@ export function createLive2DSource(
     avatarId: opts.avatarId || "default",
     // 默认空 → 走占位 renderer; 调用方传 modelUrl 才用真 PIXI/Cubism
     modelUrl: opts.modelUrl ?? "",
+    vtubeConfigUrl: opts.vtubeConfigUrl,
     transform: { ...centerBox(400, 500, 20), ...opts.transform },
   };
 }

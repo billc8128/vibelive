@@ -35,10 +35,12 @@ export function AddSourceMenu({ onAdd }: AddSourceMenuProps) {
       case "screen": source = createScreenSource(); break;
       case "live2d":
         // MVP: Live2D 默认就用 saba1B (唯一预置模型). 后续可加模型选择器.
+        // 同时绑 .vtube.json, 启用面捕后头/眼/嘴自动驱动.
         source = createLive2DSource({
           name: "saba1B",
           avatarId: "saba1B",
           modelUrl: "/live2d/saba1B/saba1B.model3.json",
+          vtubeConfigUrl: "/live2d/saba1B/saba1B.vtube.json",
         });
         break;
     }

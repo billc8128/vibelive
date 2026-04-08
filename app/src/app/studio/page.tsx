@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   createEmptyScene,
@@ -37,13 +37,15 @@ const SceneCanvas = dynamic(
 
 function makeInitialScene() {
   // 默认放 saba1B (从 VTube Studio 复制到 public/live2d/), 让用户访问 /studio
-  // 立刻看到真 Live2D 模型. 这是 Phase 2 的核心体验.
+  // 立刻看到真 Live2D 模型. Phase 3a 起也带上 .vtube.json,
+  // 使能"启用面捕"按钮一开就能驱动头部+眼+嘴.
   const scene = createEmptyScene();
   scene.sources.push(
     createLive2DSource({
       name: "saba1B",
       avatarId: "saba1B",
       modelUrl: "/live2d/saba1B/saba1B.model3.json",
+      vtubeConfigUrl: "/live2d/saba1B/saba1B.vtube.json",
     })
   );
   return scene;
@@ -51,6 +53,8 @@ function makeInitialScene() {
 
 export default function StudioPage() {
   const [scene, dispatch] = useReducer(sceneReducer, undefined, makeInitialScene);
+  const [faceTracking, setFaceTracking] = useState(false);
+  const [faceTrackErr, setFaceTrackErr] = useState<string | null>(null);
 
   return (
     <div className="ambient-gradient min-h-screen">
@@ -65,7 +69,7 @@ export default function StudioPage() {
           </span>
           <div className="flex-1 h-px bg-gradient-to-r from-accent-purple/40 to-transparent" />
           <span className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary opacity-50">
-            phase 1 · 合成预览 · 未推流
+            phase 3a · 合成预览 + 真 live2d + 面捕 · 未推流
           </span>
         </div>
 
@@ -84,12 +88,31 @@ export default function StudioPage() {
 
           {/* Center: Scene canvas (合成预览) */}
           <div className="space-y-3">
-            <h2 className="font-[family-name:var(--font-pixel)] text-[9px] text-accent-green uppercase tracking-wider px-1">
-              预览 · Preview ({scene.width}×{scene.height})
-            </h2>
+            <div className="flex items-center gap-2 px-1">
+              <h2 className="font-[family-name:var(--font-pixel)] text-[9px] text-accent-green uppercase tracking-wider">
+                预览 · Preview ({scene.width}×{scene.height})
+              </h2>
+              <div className="flex-1" />
+              {/* 面捕开关 — 启动时申请摄像头, 关掉时释放 */}
+              <button
+                type="button"
+                onClick={() => {
+                  setFaceTrackErr(null);
+                  setFaceTracking((v) => !v);
+                }}
+                className={`pixel-border px-3 py-1 font-[family-name:var(--font-pixel)] text-[8px] uppercase tracking-wider transition-colors ${
+                  faceTracking
+                    ? "bg-accent-green/20 text-accent-green"
+                    : "bg-bg-card text-text-secondary hover:bg-accent-green/10"
+                }`}
+              >
+                {faceTracking ? "● 面捕已启用" : "○ 启用面捕"}
+              </button>
+            </div>
             <div className="pixel-border-glow bg-bg-card p-2">
               <SceneCanvas
                 scene={scene}
+                faceTrackingEnabled={faceTracking}
                 onSourceError={(id, err) => {
                   console.warn("[studio] source error", id, err.message);
                   // 自动移除 init 失败的 source, 避免列表里留下 "ghost"
@@ -99,12 +122,22 @@ export default function StudioPage() {
                   // 用户停止屏幕共享 → 自动从 scene 移除
                   dispatch({ type: "removeSource", id });
                 }}
+                onFaceTrackingError={(err) => {
+                  setFaceTracking(false);
+                  setFaceTrackErr(err.message);
+                }}
               />
             </div>
-            <p className="text-[10px] text-text-secondary/60 px-1 leading-relaxed">
-              所有源在这块 canvas 上实时合成 · 摄像头/屏幕共享会请求浏览器权限 ·
-              Live2D 当前是占位渲染,等接入 Cubism SDK 后切换为真 .moc3 模型
-            </p>
+            {faceTrackErr ? (
+              <p className="text-[10px] text-accent-red/80 px-1 leading-relaxed">
+                ⚠ 面捕启动失败: {faceTrackErr}
+              </p>
+            ) : (
+              <p className="text-[10px] text-text-secondary/60 px-1 leading-relaxed">
+                所有源在这块 canvas 上实时合成 · 启用面捕会申请摄像头授权 ·
+                头部 / 眼睛 / 嘴巴 通过 saba1B.vtube.json 映射写入 Live2D 参数
+              </p>
+            )}
           </div>
 
           {/* Right: Inspector */}
@@ -116,12 +149,12 @@ export default function StudioPage() {
           </div>
         </div>
 
-        {/* ── Footer / Phase 2 hint ─────────────── */}
+        {/* ── Footer / Phase 3b hint ─────────────── */}
         <div className="mt-8 pixel-border bg-bg-card/50 p-4">
           <p className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary leading-relaxed">
-            ◇ 下一阶段: 接入 LiveKit publish (canvas.captureStream → publishTrack),
-            真 Live2D Cubism SDK + .moc3 预置皮套, react-moveable 拖拽手柄,
-            场景持久化到 channel.settings
+            ◇ Phase 3b 待做: 表情触发 (.exp3.json) · 多模型选择器 ·
+            模型迁移到 Vercel Blob · canvas.captureStream → LiveKit publishTrack ·
+            react-moveable 拖拽手柄
           </p>
         </div>
       </div>

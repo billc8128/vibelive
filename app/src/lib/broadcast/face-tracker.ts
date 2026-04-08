@@ -1,0 +1,276 @@
+"use client";
+
+import {
+  FaceLandmarker,
+  FilesetResolver,
+  type FaceLandmarkerResult,
+} from "@mediapipe/tasks-vision";
+import type { TrackingInputs } from "./vtube-config";
+
+// ────────────────────────────────────────────────────────────────
+// Singleton MediaPipe FaceLandmarker → VTube Studio tracking inputs.
+//
+// 一个 webcam, 一个 landmarker, 多个 listener (e.g. 多个 Live2DRenderer
+// 共用同一个追踪源). 单例避免每个 source 都开一个独立的摄像头.
+//
+// 输出"VTS 命名"的字段 (FaceAngleX/Y/Z, EyeOpenLeft/Right, MouthOpen,
+// MouthSmile, ...). 这样 .vtube.json 里写好的 mapping 直接拿来用,
+// renderer 不需要知道 mediapipe 的 blendshape 命名.
+//
+// 注意点:
+//   - WASM 走 jsdelivr CDN — npm 包里有 wasm/ 目录, 但 Next.js 不直接
+//     拷贝到 public/, 用 CDN 最省事 (跟 Cubism Core 一样的策略).
+//   - GPU delegate 在 Mac/Win Chrome 都跑得动. 失败 fallback CPU.
+//   - detectForVideo 用 video element 当源, 一个隐藏 <video>挂到 DOM
+//     外, srcObject 是 getUserMedia 的 MediaStream.
+// ────────────────────────────────────────────────────────────────
+
+const WASM_BASE =
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm";
+const MODEL_URL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
+export type TrackingListener = (inputs: TrackingInputs) => void;
+
+class FaceTrackerImpl {
+  private landmarker: FaceLandmarker | null = null;
+  private video: HTMLVideoElement | null = null;
+  private stream: MediaStream | null = null;
+  private rafId: number | null = null;
+  private listeners = new Set<TrackingListener>();
+  private starting: Promise<void> | null = null;
+  private _running = false;
+  private _error: Error | null = null;
+
+  get running(): boolean {
+    return this._running;
+  }
+
+  get error(): Error | null {
+    return this._error;
+  }
+
+  /**
+   * 启动追踪 — 加载模型 + 申请摄像头权限 + 启动检测循环.
+   * 已经在跑则直接返回; 正在启动则返回同一个 promise (避免并发 start).
+   */
+  async start(): Promise<void> {
+    if (this._running) return;
+    if (this.starting) return this.starting;
+
+    this.starting = this.doStart();
+    try {
+      await this.starting;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  private async doStart(): Promise<void> {
+    this._error = null;
+
+    // 1. 加载 MediaPipe FaceLandmarker (WASM 来自 CDN, 模型来自 google storage)
+    let landmarker: FaceLandmarker;
+    try {
+      const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
+      landmarker = await FaceLandmarker.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: MODEL_URL,
+          delegate: "GPU",
+        },
+        runningMode: "VIDEO",
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: true,
+        numFaces: 1,
+      });
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      this._error = err;
+      throw err;
+    }
+    this.landmarker = landmarker;
+
+    // 2. 申请摄像头 — 用低分辨率, 追踪不需要 1080p
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: "user" },
+        audio: false,
+      });
+    } catch (e) {
+      // 用户拒绝 / 没设备 — 释放 landmarker 然后抛
+      try { landmarker.close(); } catch {}
+      this.landmarker = null;
+      const err = e instanceof Error ? e : new Error(String(e));
+      this._error = err;
+      throw err;
+    }
+    this.stream = stream;
+
+    // 3. 隐藏 <video> 当输入源, 不挂 DOM (detectForVideo 接受任何 video)
+    const video = document.createElement("video");
+    video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+    try {
+      await video.play();
+    } catch {
+      // play() 在某些浏览器里需要 user gesture, 但我们的 toggle 按钮就是
+      // 一个 user gesture, 这里忽略偶发异常
+    }
+    this.video = video;
+
+    // 4. 启动循环
+    this._running = true;
+    this.loop();
+  }
+
+  stop(): void {
+    this._running = false;
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    if (this.video) {
+      try { this.video.pause(); } catch {}
+      this.video.srcObject = null;
+      this.video = null;
+    }
+    if (this.stream) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      this.stream = null;
+    }
+    if (this.landmarker) {
+      try { this.landmarker.close(); } catch {}
+      this.landmarker = null;
+    }
+  }
+
+  /** 订阅追踪事件, 返回 unsubscribe 函数. */
+  subscribe(fn: TrackingListener): () => void {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // 检测循环 — 每帧 detectForVideo, 转换结果广播
+  // ────────────────────────────────────────────────────────────────
+
+  private loop = (): void => {
+    if (!this._running || !this.landmarker || !this.video) return;
+
+    if (this.video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
+      try {
+        const result = this.landmarker.detectForVideo(this.video, performance.now());
+        const inputs = this.resultToInputs(result);
+        if (inputs) {
+          this.listeners.forEach((fn) => {
+            try { fn(inputs); } catch {}
+          });
+        }
+      } catch (e) {
+        // detect 偶发异常不应该 kill 循环 — 输出一次就行
+        if (!this._error) {
+          console.warn("[face-tracker] detect failed:", e);
+        }
+      }
+    }
+
+    this.rafId = requestAnimationFrame(this.loop);
+  };
+
+  /**
+   * MediaPipe 结果 → VTS-命名的 inputs.
+   *
+   * Head pose 取自 facialTransformationMatrix (column-major 4x4).
+   * Eye/mouth/smile 取自 blendshapes (52 个 ARKit-style 类别).
+   *
+   * 关键: 我们同时输出多个 alias 字段 (e.g. MouthOpen 和
+   * VoiceVolumePlusMouthOpen 都给 jawOpen) — 因为不同 .vtube.json
+   * 把嘴接到不同的 VTS input 名, 多输出一份让兼容面更广.
+   */
+  private resultToInputs(result: FaceLandmarkerResult): TrackingInputs | null {
+    const matrices = result.facialTransformationMatrixes;
+    const blendshapes = result.faceBlendshapes;
+    if (!matrices?.length || !blendshapes?.length) return null;
+
+    // ── Head pose ────────────────────────────────────────────────
+    // facialTransformationMatrixes[0].data 是 16 个 float, column-major
+    // 4x4. 旋转部分:
+    //   m[col*4 + row] for col,row ∈ 0..2
+    const m = matrices[0].data;
+    const m00 = m[0], m10 = m[1], m20 = m[2];
+    const m01 = m[4], m11 = m[5], m21 = m[6];
+    const m02 = m[8], m12 = m[9], m22 = m[10];
+    void m00; void m02; void m10; void m12; // 仅取需要的元素
+
+    // Y-X-Z Euler (常用 yaw-pitch-roll), 单位弧度:
+    //   pitch (X 轴, 抬头/低头)  = asin(-m21)
+    //   yaw   (Y 轴, 左右转头)   = atan2(m20, m22)
+    //   roll  (Z 轴, 歪头)       = atan2(m01, m11)
+    const pitch = Math.asin(-Math.max(-1, Math.min(1, m21)));
+    const yaw = Math.atan2(m20, m22);
+    const roll = Math.atan2(m01, m11);
+    const RAD2DEG = 180 / Math.PI;
+
+    // VTube Studio 习惯: 摄像头镜像 → 用户右转头, 模型也右转头.
+    // MediaPipe 给的是非镜像坐标, yaw 方向跟 VTS 相反 → 取负.
+    const faceX = -yaw * RAD2DEG;
+    const faceY = pitch * RAD2DEG;
+    const faceZ = -roll * RAD2DEG;
+
+    // ── Blendshapes (ARKit 52 类别) ──────────────────────────────
+    const bs: Record<string, number> = {};
+    for (const c of blendshapes[0].categories) {
+      if (c.categoryName) bs[c.categoryName] = c.score;
+    }
+
+    // EyeOpen* — VTS 的 EyeOpenRight/Left 默认范围 [0, 0.5] (1.0 = 大睁眼).
+    // saba1B 的 .vtube.json 用 InputRangeUpper=0.5 → 输出 1 (全开).
+    // 所以我们输出 (1 - blink) * 0.5: blink=0 (大睁) → 0.5, blink=1 (闭) → 0.
+    const eyeOpenLeft = (1 - (bs.eyeBlinkLeft ?? 0)) * 0.5;
+    const eyeOpenRight = (1 - (bs.eyeBlinkRight ?? 0)) * 0.5;
+
+    // jawOpen → MouthOpen: 直接 0..1, 跟 VTS 一致
+    const jawOpen = bs.jawOpen ?? 0;
+
+    // 微笑 — 取左右平均
+    const smile = ((bs.mouthSmileLeft ?? 0) + (bs.mouthSmileRight ?? 0)) / 2;
+
+    // 视线 — 用 ARKit 的 eyeLookIn/Out 推近似 X. Y 用 Up/Down.
+    // saba1B 的视线 mapping 范围是 [-1, 1].
+    const eyeXLeft =
+      (bs.eyeLookOutLeft ?? 0) - (bs.eyeLookInLeft ?? 0); // 左眼向左为 +
+    const eyeYLeft =
+      (bs.eyeLookUpLeft ?? 0) - (bs.eyeLookDownLeft ?? 0);
+    const eyeXRight =
+      (bs.eyeLookInRight ?? 0) - (bs.eyeLookOutRight ?? 0); // 右眼向左为 +
+    const eyeYRight =
+      (bs.eyeLookUpRight ?? 0) - (bs.eyeLookDownRight ?? 0);
+
+    return {
+      // ── Head pose ──
+      FaceAngleX: faceX,
+      FaceAngleY: faceY,
+      FaceAngleZ: faceZ,
+      // ── Eyes ──
+      EyeOpenLeft: eyeOpenLeft,
+      EyeOpenRight: eyeOpenRight,
+      EyeLeftX: eyeXLeft,
+      EyeLeftY: eyeYLeft,
+      EyeRightX: eyeXRight,
+      EyeRightY: eyeYRight,
+      // ── Mouth — 多个 alias 兼容不同模型配置 ──
+      MouthOpen: jawOpen,
+      VoiceVolume: jawOpen,
+      VoiceVolumePlusMouthOpen: jawOpen,
+      MouthSmile: smile,
+      VoiceFrequencyPlusMouthSmile: smile,
+      MouthX: smile, // 部分模型用 MouthX 控制嘴角
+    };
+  }
+}
+
+export const faceTracker = new FaceTrackerImpl();

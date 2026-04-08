@@ -3,6 +3,11 @@ import { Live2DModel } from "pixi-live2d-display-lipsyncpatch/cubism4";
 import type { TransformBox } from "../sources";
 import type { SourceRenderer } from "./types";
 import { loadCubismCore } from "../cubism-loader";
+import {
+  loadVtubeConfig,
+  VtubeApplier,
+  type TrackingInputs,
+} from "../vtube-config";
 
 // ────────────────────────────────────────────────────────────────
 // 真 Live2D renderer (Cubism 4 / VTube Studio 模型)
@@ -13,7 +18,9 @@ import { loadCubismCore } from "../cubism-loader";
 //   3. Live2DModel.from(model3.json URL) - pixi-live2d-display 自动 fetch
 //      moc3 / 纹理 / physics3 / 表情等
 //   4. 加到 stage, scale + center 到 PIXI canvas 内
-//   5. 每帧 compositor 调 draw(ctx, box, time), 我们 drawImage(pixiCanvas)
+//   5. 如果有 vtubeConfigUrl, 平行加载 .vtube.json, 构造 VtubeApplier,
+//      hook beforeModelUpdate — 每帧把 latestInputs 写入 coreModel
+//   6. 每帧 compositor 调 draw(ctx, box, time), 我们 drawImage(pixiCanvas)
 //      把当前帧画到 compositor 的 2D canvas
 //
 // 关键 caveats:
@@ -26,6 +33,11 @@ import { loadCubismCore } from "../cubism-loader";
 //   D) PIXI Application 的内部 canvas 大小固定 (用 box 的初值),
 //      box 后续被 inspector 改大小时, compositor 会缩放 drawImage 输出,
 //      不需要 resize PIXI canvas. 这避免了 resize 导致 WebGL context 重建.
+//   E) 面捕注入点: 用 `internalModel.on("beforeModelUpdate", cb)`. 这
+//      是 Cubism4InternalModel.update() 里 motion + focus + natural +
+//      physics 全部跑完之后、最终 model.update() 之前的 hook. 我们用
+//      setParameterValueById 全量覆盖, 视觉上自动接管这些参数. 物理
+//      (头发摆动等) 用上一帧的旧值, 1 帧延迟可忽略.
 // ────────────────────────────────────────────────────────────────
 
 // 全局只 register 一次 PIXI Ticker — 多个 source 实例共享
@@ -42,14 +54,31 @@ function ensureTickerRegistered() {
 const INTERNAL_CANVAS_W = 800;
 const INTERNAL_CANVAS_H = 1000;
 
+// pixi-live2d-display 的 internalModel 没有公开类型, 我们需要的字段
+// 拿一个最小接口出来, 避开 any 散落
+interface InternalModelLike {
+  coreModel: { setParameterValueById(id: string, value: number, weight?: number): void };
+  on(event: string, cb: () => void): unknown;
+  off?(event: string, cb: () => void): unknown;
+}
+
+interface Live2DModelLike {
+  internalModel: InternalModelLike;
+}
+
 export class Live2DRenderer implements SourceRenderer {
   private app: Application | null = null;
   private model: Live2DModel | null = null;
   private modelUrl: string;
+  private vtubeConfigUrl: string | undefined;
+  private applier: VtubeApplier | null = null;
+  private latestInputs: TrackingInputs | null = null;
+  private beforeUpdateHandler: (() => void) | null = null;
   private _ready = false;
 
-  constructor(opts: { modelUrl: string }) {
+  constructor(opts: { modelUrl: string; vtubeConfigUrl?: string }) {
     this.modelUrl = opts.modelUrl;
+    this.vtubeConfigUrl = opts.vtubeConfigUrl;
   }
 
   get ready() {
@@ -63,7 +92,18 @@ export class Live2DRenderer implements SourceRenderer {
     // 2. 注册 PIXI ticker (全局一次)
     ensureTickerRegistered();
 
-    // 3. 创建 detached PIXI Application — 它自己的 canvas 不挂 DOM
+    // 3. 平行启动: vtube config 加载 (可选, 失败不阻塞模型)
+    const configPromise = this.vtubeConfigUrl
+      ? loadVtubeConfig(this.vtubeConfigUrl).catch((e) => {
+          console.warn(
+            `[live2d] vtube config ${this.vtubeConfigUrl} 加载失败:`,
+            e instanceof Error ? e.message : e
+          );
+          return null;
+        })
+      : Promise.resolve(null);
+
+    // 4. 创建 detached PIXI Application — 它自己的 canvas 不挂 DOM
     //    backgroundAlpha=0 → 透明背景, 让 compositor drawImage 只画到模型像素
     const app = new Application({
       width: INTERNAL_CANVAS_W,
@@ -75,7 +115,7 @@ export class Live2DRenderer implements SourceRenderer {
     });
     this.app = app;
 
-    // 4. 加载模型 — pixi-live2d-display 自动 fetch model3.json + 所有依赖
+    // 5. 加载模型 — pixi-live2d-display 自动 fetch model3.json + 所有依赖
     let model: Live2DModel;
     try {
       model = await Live2DModel.from(this.modelUrl);
@@ -88,7 +128,7 @@ export class Live2DRenderer implements SourceRenderer {
       );
     }
 
-    // 5. 把模型缩放到 PIXI canvas 内, anchor 居中
+    // 6. 把模型缩放到 PIXI canvas 内, anchor 居中
     //    Live2D 模型的原生大小由 .moc3 决定, 不一定匹配我们的 canvas.
     //    我们算出"等比例适配"的 scale, 然后 anchor 0.5 居中.
     const modelWidth = model.width || INTERNAL_CANVAS_W;
@@ -105,7 +145,29 @@ export class Live2DRenderer implements SourceRenderer {
     app.stage.addChild(model);
 
     this.model = model;
+
+    // 7. 等 vtube config 完成 → 构造 applier + hook update
+    const config = await configPromise;
+    if (config) {
+      this.applier = new VtubeApplier(config);
+      const internal = (model as unknown as Live2DModelLike).internalModel;
+      const handler = () => {
+        if (!this.applier || !this.latestInputs) return;
+        this.applier.apply(internal.coreModel, this.latestInputs);
+      };
+      internal.on("beforeModelUpdate", handler);
+      this.beforeUpdateHandler = handler;
+      console.log(
+        `[live2d] vtube 配置就绪: ${config.mappings.length} 个参数映射`
+      );
+    }
+
     this._ready = true;
+  }
+
+  /** Compositor 把 face tracker 的最新 inputs 推过来. */
+  onTrackingInputs(inputs: TrackingInputs): void {
+    this.latestInputs = inputs;
   }
 
   draw(ctx: CanvasRenderingContext2D, box: TransformBox): void {
@@ -131,6 +193,15 @@ export class Live2DRenderer implements SourceRenderer {
   }
 
   dispose(): void {
+    // 先解绑 update hook, 避免 destroy 过程中 callback 访问已释放对象
+    if (this.beforeUpdateHandler && this.model) {
+      const internal = (this.model as unknown as Live2DModelLike).internalModel;
+      try { internal.off?.("beforeModelUpdate", this.beforeUpdateHandler); } catch {}
+      this.beforeUpdateHandler = null;
+    }
+    this.applier = null;
+    this.latestInputs = null;
+
     if (this.model) {
       try {
         this.model.destroy({ children: true });
