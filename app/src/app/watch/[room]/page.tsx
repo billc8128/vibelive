@@ -94,11 +94,21 @@ function PlayerControls({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const tracks = useTracks([Track.Source.ScreenShare, Track.Source.ScreenShareAudio], {
-    onlySubscribed: true,
-  });
+  // OBS via Ingress 推上来的 track 源是 Camera/Microphone, 不是 ScreenShare.
+  // 同时订阅两类源, 优先选浏览器模式的 ScreenShare, fallback 到 OBS 的 Camera.
+  const tracks = useTracks(
+    [
+      Track.Source.ScreenShare,
+      Track.Source.ScreenShareAudio,
+      Track.Source.Camera,
+      Track.Source.Microphone,
+    ],
+    { onlySubscribed: true }
+  );
 
-  const screenTrack = tracks.find((tr) => tr.source === Track.Source.ScreenShare);
+  const screenTrack =
+    tracks.find((tr) => tr.source === Track.Source.ScreenShare) ||
+    tracks.find((tr) => tr.source === Track.Source.Camera);
 
   // Sync fullscreen state
   useEffect(() => {
@@ -266,12 +276,25 @@ function VideoArea({
   showBanner: { icon: string; count: number; color: string } | null;
   screenFlash: boolean;
 }) {
-  const tracks = useTracks([Track.Source.ScreenShare], { onlySubscribed: true });
+  // OBS via Ingress 推上来的 track 源是 Camera, 不是 ScreenShare.
+  // 同时订阅两类源, 优先选浏览器模式的 ScreenShare, fallback 到 OBS 的 Camera.
+  const tracks = useTracks(
+    [
+      Track.Source.ScreenShare,
+      Track.Source.ScreenShareAudio,
+      Track.Source.Camera,
+      Track.Source.Microphone,
+    ],
+    { onlySubscribed: true }
+  );
   const participants = useParticipants();
-  const viewerCount = Math.max(0, participants.length - 1);
+  // 真实观众数 = 排除有 publish 权限的 participant (主播自己 + OBS ingress 虚拟参与者)
+  const viewerCount = participants.filter((p) => !p.permissions?.canPublish).length;
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
 
-  const screenTrack = tracks.find((tr) => tr.source === Track.Source.ScreenShare);
+  const screenTrack =
+    tracks.find((tr) => tr.source === Track.Source.ScreenShare) ||
+    tracks.find((tr) => tr.source === Track.Source.Camera);
 
   // Capture the video element from VideoTrack via callback ref
   const videoContainerRef = useCallback((node: HTMLDivElement | null) => {
@@ -345,6 +368,9 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   const { t } = useI18n();
   const room = useRoomContext();
   const participants = useParticipants();
+  // 真正的"观众" = 没有 publish 权限的 participant.
+  // 排除掉主播自己 (有 canPublish) 以及 OBS ingress 虚拟参与者 obs-{slug}.
+  const viewers = participants.filter((p) => !p.permissions?.canPublish);
   const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
   const chatStorageKey = `vibelive-chat-${decodedRoom}`;
@@ -513,7 +539,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   const tabs = [
     { key: "chat" as const, label: t('watch.tabChat'), icon: "💬" },
     { key: "info" as const, label: t('watch.tabProject'), icon: "◈" },
-    { key: "users" as const, label: `${t('watch.online')} ${participants.length}`, icon: "◉" },
+    { key: "users" as const, label: `${t('watch.online')} ${viewers.length}`, icon: "◉" },
   ];
 
   return (
@@ -781,20 +807,26 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
       )}
 
       {/* ── Users Tab ── */}
+      {/* 只列出真正的观众 — 主播 / OBS 推流端不在这里展示, 它们的"在线"状态
+          通过视频是否在播放体现 */}
       {tab === "users" && (
         <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1 min-h-0">
-          {participants.map((p) => {
-            const isPublisher = p.permissions?.canPublish;
-            return (
-              <div key={p.identity} className="flex items-center gap-2 px-2 py-1.5 hover:bg-bg-surface/50 transition-colors">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${isPublisher ? "bg-accent-green" : "bg-accent-cyan"}`} />
-                <span className="text-xs text-text-primary truncate flex-1">{p.identity}</span>
-                {isPublisher && (
-                  <span className="font-[family-name:var(--font-pixel)] text-[7px] text-accent-green">主播</span>
-                )}
-              </div>
-            );
-          })}
+          {viewers.length === 0 && (
+            <p className="text-xs text-text-secondary/40 text-center py-8">
+              还没有观众
+            </p>
+          )}
+          {viewers.map((p) => (
+            <div
+              key={p.identity}
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-bg-surface/50 transition-colors"
+            >
+              <span className="w-2 h-2 rounded-full shrink-0 bg-accent-cyan" />
+              <span className="text-xs text-text-primary truncate flex-1">
+                {p.identity}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>
