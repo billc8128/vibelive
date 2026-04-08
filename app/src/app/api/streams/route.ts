@@ -1,4 +1,9 @@
 import { NextRequest } from "next/server";
+import { normalizeAiAudienceSettings } from "@/lib/ai-audience/settings";
+import {
+  startAiAudienceRuntime,
+  stopAiAudienceRuntime,
+} from "@/lib/orchestrator/client";
 import { createClient } from "@/lib/supabase/server";
 import {
   archiveActiveStreamsForChannel,
@@ -143,6 +148,23 @@ export async function POST() {
       supabase.from("notifications").insert(notifications).then(() => {});
     });
 
+  const aiAudience = normalizeAiAudienceSettings(
+    ((channel.settings as Record<string, unknown>) || {}) as Record<
+      string,
+      unknown
+    >,
+  );
+  if (aiAudience.enabled) {
+    void startAiAudienceRuntime({
+      roomSlug: channel.slug,
+      channelId: channel.id,
+      roomTitle: channel.title || channel.slug,
+      projectStage: channel.project_stage || "构思中",
+      codingTool: channel.coding_tool || "other",
+      aiAudience,
+    }).catch(() => {});
+  }
+
   return Response.json({ stream: data });
 }
 
@@ -247,6 +269,8 @@ export async function DELETE() {
   if (!result.archived) {
     return Response.json({ error: result.reason || "归档失败" }, { status: 500 });
   }
+
+  void stopAiAudienceRuntime({ roomSlug: liveStream.room_name }).catch(() => {});
 
   return Response.json({ ok: true, archived: true });
 }
