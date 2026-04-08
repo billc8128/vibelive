@@ -11,12 +11,13 @@
 //   - 后续调用 → 直接 resolve 已存的 promise
 //   - 多个 source 同时初始化 → 共享同一个 in-flight 请求
 //
-// 用 jsdelivr 上 dylanNew/live2d 镜像的 live2dcubismcore.min.js
-// (社区常用,稳定). 生产可以下载到 public/ 用本地路径换掉 URL.
+// 用 Live2D Inc 官方 SDK CDN — 不依赖第三方镜像, 不会因 GitHub 仓库
+// 改名而 404. 之前用的 jsdelivr/dylanNew/live2d 在 2026 年初消失了
+// (Phase 3a 还能用, Phase 3f 验证时 404), 切到官方 URL.
 // ────────────────────────────────────────────────────────────────
 
 const CUBISM_CORE_CDN =
-  "https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2dcubismcore.min.js";
+  "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
 
 // Global on window — 只在浏览器存在
 declare global {
