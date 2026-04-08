@@ -288,8 +288,11 @@ function VideoArea({
     { onlySubscribed: true }
   );
   const participants = useParticipants();
-  // 真实观众数 = 排除有 publish 权限的 participant (主播自己 + OBS ingress 虚拟参与者)
-  const viewerCount = participants.filter((p) => !p.permissions?.canPublish).length;
+  // 真实观众数 = 排除有 publish 权限的 (主播 + OBS ingress 虚拟参与者)
+  // 以及首页 hover 卡片产生的临时连接 (identity 前缀 hover-, 见 LiveStreamCard)
+  const viewerCount = participants.filter(
+    (p) => !p.permissions?.canPublish && !p.identity.startsWith("hover-")
+  ).length;
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
 
   const screenTrack =
@@ -369,8 +372,11 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   const room = useRoomContext();
   const participants = useParticipants();
   // 真正的"观众" = 没有 publish 权限的 participant.
-  // 排除掉主播自己 (有 canPublish) 以及 OBS ingress 虚拟参与者 obs-{slug}.
-  const viewers = participants.filter((p) => !p.permissions?.canPublish);
+  // 排除: 主播 (canPublish), OBS ingress 虚拟参与者 obs-{slug},
+  //      以及首页 hover 卡片的临时连接 (identity 前缀 hover-).
+  const viewers = participants.filter(
+    (p) => !p.permissions?.canPublish && !p.identity.startsWith("hover-")
+  );
   const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
   const chatStorageKey = `vibelive-chat-${decodedRoom}`;
@@ -823,7 +829,8 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
             >
               <span className="w-2 h-2 rounded-full shrink-0 bg-accent-cyan" />
               <span className="text-xs text-text-primary truncate flex-1">
-                {p.identity}
+                {/* identity 是 `viewer-<nick>-<rand>` 的去重 ID,显示用 name */}
+                {p.name || p.identity}
               </span>
             </div>
           ))}
