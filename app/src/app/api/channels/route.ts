@@ -1,4 +1,9 @@
 import { NextRequest } from "next/server";
+import {
+  AI_AUDIENCE_SETTINGS_KEYS,
+  isAllowedAiAudienceSettingsKey,
+  normalizeAiAudienceSettingsPatch,
+} from "@/lib/ai-audience/settings";
 import { createClient } from "@/lib/supabase/server";
 
 // Slug 校验:小写字母/数字/短横线,3-20 字符 (与数据库 check 约束一致)
@@ -24,6 +29,7 @@ const SETTINGS_KEYS = new Set([
   "slow_mode_enabled",
   "slow_mode_seconds",
   "followers_only",
+  ...AI_AUDIENCE_SETTINGS_KEYS,
 ]);
 
 // 简单字符串截断
@@ -175,8 +181,16 @@ export async function PATCH(request: NextRequest) {
     const merged: Record<string, unknown> = {
       ...((channel.settings as Record<string, unknown>) || {}),
     };
+    const aiAudiencePatch = normalizeAiAudienceSettingsPatch(incoming);
     for (const [k, v] of Object.entries(incoming)) {
       if (!SETTINGS_KEYS.has(k)) continue;
+      if (isAllowedAiAudienceSettingsKey(k)) {
+        const nextValue = aiAudiencePatch[k];
+        if (nextValue !== undefined) {
+          merged[k] = nextValue;
+        }
+        continue;
+      }
       // 简单类型校验
       if (k === "platforms" && Array.isArray(v)) {
         merged[k] = v.filter((x) => typeof x === "string").slice(0, 10);

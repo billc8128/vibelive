@@ -221,6 +221,12 @@ export const en: Record<TranslationKey, string> = {
   "goLive.chat.slowModeSeconds": "{n}s",
   "goLive.chat.followersOnly": "Followers Only",
   "goLive.chat.followersOnlyComing": "Follow system coming soon",
+  "goLive.chat.aiAudience": "AI Audience",
+  "goLive.chat.aiAudienceHint": "{n} bot-badged audience agents join this room",
+  "goLive.chat.aiAudienceIntensity": "Activity Level",
+  "goLive.chat.aiAudienceIntensity.low": "Quiet",
+  "goLive.chat.aiAudienceIntensity.medium": "Balanced",
+  "goLive.chat.aiAudienceIntensity.high": "Active",
 
   "goLive.saved": "✓ Saved",
   "goLive.saving": "Saving...",
