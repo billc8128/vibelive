@@ -222,6 +222,13 @@ export const zh = {
 
   "goLive.saved": "✓ 已保存",
   "goLive.saving": "保存中...",
+  "goLive.section.update": "▶ 推送更新",
+  "goLive.section.updating": "推送中...",
+  "goLive.section.updated": "✓ 已推送",
+  "goLive.section.dirty": "● 未保存改动",
+  "goLive.section.clean": "已与线上同步",
+  "goLive.streamInfo.titleMissing": "⚠ 请先在右侧直播信息区填写标题, 并点击 ▶ 推送更新",
+  "goLive.streamInfo.dirtyWarning": "⚠ 直播信息有未推送的修改 — 观众看到的还是旧版本, 请先点击 ▶ 推送更新",
   "goLive.error.noChannel": "请先创建频道",
   "goLive.error.previewFailed": "屏幕预览失败",
   "goLive.error.publishFailed": "发布失败",

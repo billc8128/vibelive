@@ -224,6 +224,13 @@ export const en: Record<TranslationKey, string> = {
 
   "goLive.saved": "✓ Saved",
   "goLive.saving": "Saving...",
+  "goLive.section.update": "▶ Push Update",
+  "goLive.section.updating": "Pushing...",
+  "goLive.section.updated": "✓ Pushed",
+  "goLive.section.dirty": "● Unsaved changes",
+  "goLive.section.clean": "In sync with live",
+  "goLive.streamInfo.titleMissing": "⚠ Fill in a stream title in the Stream Info section and click ▶ Push Update first",
+  "goLive.streamInfo.dirtyWarning": "⚠ Stream info has unsaved changes — viewers still see the old version. Click ▶ Push Update first",
   "goLive.error.noChannel": "Please create a channel first",
   "goLive.error.previewFailed": "Screen preview failed",
   "goLive.error.publishFailed": "Failed to publish",

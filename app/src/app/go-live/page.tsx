@@ -115,6 +115,49 @@ const SLOW_MODE_OPTIONS = [5, 10, 30, 60] as const;
 
 const SLUG_RE = /^[a-z0-9-]{3,20}$/;
 
+// ─── Section ↔ Field Mapping ───────────────────────────────────────
+// 把右栏 4 个 section 各自负责的字段集中描述, 配合 isSectionDirty/commitSection
+// 使用. 分两类: cols = channels 表的顶层列, settings = settings JSONB 的子键.
+type SectionKey = "streamInfo" | "projectInfo" | "tech" | "chat";
+type ColField =
+  | "title"
+  | "thumbnail_url"
+  | "project_name"
+  | "project_desc"
+  | "project_stage"
+  | "project_url"
+  | "coding_tool"
+  | "quality";
+type SettingsField =
+  | "category"
+  | "platforms"
+  | "tags"
+  | "slow_mode_enabled"
+  | "slow_mode_seconds"
+  | "followers_only";
+
+const SECTION_FIELDS: Record<
+  SectionKey,
+  { cols: ColField[]; settings: SettingsField[] }
+> = {
+  streamInfo: {
+    cols: ["title", "thumbnail_url"],
+    settings: ["category", "platforms", "tags"],
+  },
+  projectInfo: {
+    cols: ["project_name", "project_desc", "project_stage", "project_url"],
+    settings: [],
+  },
+  tech: {
+    cols: ["coding_tool", "quality"],
+    settings: [],
+  },
+  chat: {
+    cols: [],
+    settings: ["slow_mode_enabled", "slow_mode_seconds", "followers_only"],
+  },
+};
+
 interface ChannelSettings {
   category?: string;
   platforms?: string[];
@@ -433,50 +476,36 @@ function Dashboard({
   // 当前我们等待加入的 OBS 参与者身份 (= "obs-{slug}")
   const expectedObsIdentityRef = useRef<string | null>(null);
 
-  // ─ Settings auto-save (debounced) ─
-  const [savingState, setSavingState] = useState<"idle" | "saving" | "saved">(
-    "idle"
+  // ─ Saved (服务端确认值) vs Draft (本地编辑值) ─
+  // 字段编辑只改 draft, 不立即写库. 每个 section 用"推送更新"按钮显式提交.
+  // 这样可以避免半成品被自动推送给观众 (PATCH 在直播中会同步到 live_streams).
+  const [savedChannel, setSavedChannel] = useState<Channel>(channel);
+  const [draftChannel, setDraftChannel] = useState<Channel>(channel);
+  const [committingSection, setCommittingSection] = useState<SectionKey | null>(
+    null
   );
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const channelRef = useRef(channel);
-  channelRef.current = channel;
+  const [committedSection, setCommittedSection] = useState<SectionKey | null>(
+    null
+  );
+  const committedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 单字段或 settings 子键的统一更新接口
-  const patchChannel = useCallback(
+  // draftRef 给 LiveKit 异步回调读 quality 时用 (回调里需要最新值, 不通过 state)
+  const draftRef = useRef(draftChannel);
+  draftRef.current = draftChannel;
+
+  // 只更新本地 draft, 不发请求
+  const patchDraft = useCallback(
     (delta: Partial<Channel> & { settings?: Partial<ChannelSettings> }) => {
-      // 1. 立即应用到本地状态 (乐观更新)
-      const next: Channel = {
-        ...channelRef.current,
+      setDraftChannel((prev) => ({
+        ...prev,
         ...delta,
         settings: {
-          ...channelRef.current.settings,
+          ...prev.settings,
           ...(delta.settings || {}),
         },
-      };
-      setChannel(next);
-
-      // 2. 排队 PATCH
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      setSavingState("saving");
-      saveTimerRef.current = setTimeout(async () => {
-        try {
-          const res = await fetch("/api/channels", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(delta),
-          });
-          if (res.ok) {
-            setSavingState("saved");
-            setTimeout(() => setSavingState("idle"), 1500);
-          } else {
-            setSavingState("idle");
-          }
-        } catch {
-          setSavingState("idle");
-        }
-      }, 500);
+      }));
     },
-    [setChannel]
+    []
   );
 
   // ─ Timer ─
@@ -521,10 +550,114 @@ function Dashboard({
   // 这对 OBS 模式尤其重要 — 关掉 dashboard 不应该停掉 OBS 推流)
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (committedTimerRef.current) clearTimeout(committedTimerRef.current);
       cleanupBroadcast();
     };
   }, [cleanupBroadcast]);
+
+  // ─ Section dirty 比较 + 单 section 提交 ─
+  const isFieldEqual = (a: unknown, b: unknown): boolean => {
+    if (a === b) return true;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      return a.every((v, i) => v === b[i]);
+    }
+    // null/undefined/'' 视为同义 (用户清空字段后再恢复, 不应误报 dirty)
+    const an = a == null || a === "" ? null : a;
+    const bn = b == null || b === "" ? null : b;
+    return an === bn;
+  };
+
+  const isSectionDirty = useCallback(
+    (key: SectionKey): boolean => {
+      const fields = SECTION_FIELDS[key];
+      for (const c of fields.cols) {
+        if (!isFieldEqual(draftChannel[c], savedChannel[c])) return true;
+      }
+      for (const s of fields.settings) {
+        if (
+          !isFieldEqual(
+            (draftChannel.settings as Record<string, unknown>)[s],
+            (savedChannel.settings as Record<string, unknown>)[s]
+          )
+        ) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [draftChannel, savedChannel]
+  );
+
+  const commitSection = useCallback(
+    async (key: SectionKey) => {
+      const fields = SECTION_FIELDS[key];
+      const delta: Record<string, unknown> = {};
+      const settingsDelta: Record<string, unknown> = {};
+
+      for (const c of fields.cols) {
+        if (!isFieldEqual(draftChannel[c], savedChannel[c])) {
+          delta[c] = draftChannel[c];
+        }
+      }
+      for (const s of fields.settings) {
+        const dv = (draftChannel.settings as Record<string, unknown>)[s];
+        const sv = (savedChannel.settings as Record<string, unknown>)[s];
+        if (!isFieldEqual(dv, sv)) {
+          settingsDelta[s] = dv;
+        }
+      }
+      if (Object.keys(settingsDelta).length > 0) {
+        delta.settings = settingsDelta;
+      }
+      if (Object.keys(delta).length === 0) return;
+
+      setError("");
+      setCommittingSection(key);
+      try {
+        const res = await fetch("/api/channels", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(delta),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "更新失败");
+        const updated = normalizeChannel(json.channel);
+        setSavedChannel(updated);
+        // 用服务端确认值合并 draft (其它 section 未提交的改动保留)
+        setDraftChannel((prev) => {
+          const merged = { ...prev } as unknown as Record<string, unknown>;
+          const updatedAny = updated as unknown as Record<string, unknown>;
+          for (const c of fields.cols) {
+            merged[c] = updatedAny[c];
+          }
+          if (fields.settings.length > 0) {
+            const mergedSettings: Record<string, unknown> = { ...prev.settings };
+            for (const s of fields.settings) {
+              mergedSettings[s] = (
+                updated.settings as Record<string, unknown>
+              )[s];
+            }
+            merged.settings = mergedSettings as ChannelSettings;
+          }
+          return merged as unknown as Channel;
+        });
+        // 同步父组件 (避免后续组件刷新时回到旧值)
+        setChannel(updated);
+        setCommittedSection(key);
+        if (committedTimerRef.current) clearTimeout(committedTimerRef.current);
+        committedTimerRef.current = setTimeout(
+          () => setCommittedSection(null),
+          1500
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "更新失败");
+      } finally {
+        setCommittingSection(null);
+      }
+    },
+    [draftChannel, savedChannel, setChannel]
+  );
 
   // ─ OBS: 加载或创建 ingress ─
   const loadIngress = useCallback(async (): Promise<IngressInfo | null> => {
@@ -678,9 +811,12 @@ function Dashboard({
 
   // ─ OBS connected → 创建 live_streams 行 ─
   const handleObsConnected = useCallback(async () => {
-    if (!channel.title.trim()) {
-      // 没填标题就别真的开播 — 显示警告但保持监听
-      setError("请填写直播标题, 然后让 OBS 重新连接");
+    // 校验 saved 值 — 因为 POST /api/streams 会从 channels 表读取写入 live_streams,
+    // 用户必须先"推送更新" stream info, 否则观众看到的是旧标题
+    if (!savedChannel.title.trim()) {
+      setError(
+        '请先填写直播标题并点击 "推送更新", 然后让 OBS 重新连接'
+      );
       return;
     }
     try {
@@ -695,7 +831,7 @@ function Dashboard({
     } catch (e) {
       setError(e instanceof Error ? e.message : "登记失败");
     }
-  }, [channel.title]);
+  }, [savedChannel.title]);
 
   // ─ Switch mode: 清理之前的连接 ─
   const switchMode = useCallback(
@@ -771,7 +907,7 @@ function Dashboard({
       }
 
       // 3. 创建本地屏幕 track (会触发浏览器屏幕选择 UI)
-      const quality = (channelRef.current.quality as QualityLevel) || "1080p";
+      const quality = (draftRef.current.quality as QualityLevel) || "1080p";
       const preset = QUALITY_PRESETS[quality];
       const tracks: LocalTrack[] = await createLocalScreenTracks({
         audio: true,
@@ -820,14 +956,16 @@ function Dashboard({
   // ─ Start broadcast: publish tracks + insert live_streams row ─
   const startBroadcast = useCallback(async () => {
     if (!roomRef.current || !videoTrackRef.current) return;
-    if (!channel.title.trim()) {
-      setError("请填写直播标题");
+    // 校验 saved 值 — 因为 POST /api/streams 写 live_streams 时
+    // 是从 channels 表读取的, 必须先"推送更新"才能让观众看到
+    if (!savedChannel.title.trim()) {
+      setError('请先填写直播标题并点击 "推送更新"');
       return;
     }
     setBState("publishing");
     setError("");
     try {
-      const quality = (channelRef.current.quality as QualityLevel) || "1080p";
+      const quality = (draftRef.current.quality as QualityLevel) || "1080p";
       const preset = QUALITY_PRESETS[quality];
 
       await roomRef.current.localParticipant.publishTrack(
@@ -860,7 +998,7 @@ function Dashboard({
       // 失败回到预览态 (track 还在, 不重新选源)
       setBState("previewing");
     }
-  }, [channel.title, t]);
+  }, [savedChannel.title, t]);
 
   // ─ Stop broadcast: archive + cleanup ─
   const stopBroadcast = useCallback(async () => {
@@ -893,7 +1031,8 @@ function Dashboard({
       const {
         data: { publicUrl },
       } = supabase.storage.from("thumbnails").getPublicUrl(path);
-      patchChannel({ thumbnail_url: publicUrl });
+      // 只更新 draft, 用户必须显式点击 streamInfo 的"推送更新"才会发布给观众
+      patchDraft({ thumbnail_url: publicUrl });
     } catch {
       setError("封面图上传失败");
     } finally {
@@ -935,14 +1074,14 @@ function Dashboard({
             /watch/{channel.slug} ↗
           </Link>
           <div className="flex-1" />
-          {savingState === "saving" && (
+          {committingSection && (
             <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-yellow animate-pulse">
-              {t("goLive.saving")}
+              {t("goLive.section.updating")}
             </span>
           )}
-          {savingState === "saved" && (
-            <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-green/70">
-              {t("goLive.saved")}
+          {!committingSection && committedSection && (
+            <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-green/80">
+              {t("goLive.section.updated")}
             </span>
           )}
         </div>
@@ -1065,7 +1204,7 @@ function Dashboard({
                 <>
                   <button
                     onClick={startBroadcast}
-                    disabled={!channel.title.trim()}
+                    disabled={!savedChannel.title.trim()}
                     className="pixel-btn border-accent-green text-accent-green hover:bg-accent-green hover:text-bg-primary text-[10px] px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-accent-green"
                   >
                     {t("goLive.btn.startBroadcast")}
@@ -1103,6 +1242,24 @@ function Dashboard({
               </span>
             </div>
 
+            {/* StreamInfo 同步提示: 解释为什么"开始直播"按钮 disabled, 或为什么直播中改了字段观众没看到.
+                两种触发条件:
+                  1. saved.title 为空 → 还没"推送更新"过任何标题, 按钮 disabled
+                  2. streamInfo dirty → 用户改了 draft 但没推送, 观众看到的还是旧值
+                只在 idle 之外的状态显示 (用户准备开播 / 在直播中) */}
+            {bState !== "idle" && !savedChannel.title.trim() && (
+              <div className="pixel-border bg-accent-yellow/10 border-accent-yellow/40 px-3 py-2 text-[10px] text-accent-yellow">
+                {t("goLive.streamInfo.titleMissing")}
+              </div>
+            )}
+            {bState !== "idle" &&
+              savedChannel.title.trim() &&
+              isSectionDirty("streamInfo") && (
+                <div className="pixel-border bg-accent-pink/10 border-accent-pink/40 px-3 py-2 text-[10px] text-accent-pink">
+                  {t("goLive.streamInfo.dirtyWarning")}
+                </div>
+              )}
+
             {/* OBS panel (URL + key + steps) */}
             {mode === "obs" && (
               <ObsPanel
@@ -1120,13 +1277,20 @@ function Dashboard({
 
           {/* ─ Right: Settings Form ─ */}
           <div className="space-y-3">
-            <SettingsSection title={t("goLive.section.streamInfo")} accentClass="text-accent-purple">
+            <SettingsSection
+              title={t("goLive.section.streamInfo")}
+              accentClass="text-accent-purple"
+              dirty={isSectionDirty("streamInfo")}
+              committing={committingSection === "streamInfo"}
+              committed={committedSection === "streamInfo"}
+              onCommit={() => commitSection("streamInfo")}
+            >
               {/* Title */}
               <Field label={t("goLive.streamTitleRequired")}>
                 <input
                   type="text"
-                  value={channel.title}
-                  onChange={(e) => patchChannel({ title: e.target.value })}
+                  value={draftChannel.title}
+                  onChange={(e) => patchDraft({ title: e.target.value })}
                   placeholder={t("goLive.roomPlaceholder")}
                   maxLength={200}
                   className="w-full bg-bg-primary border border-border-pixel px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary/30 focus:border-accent-purple focus:outline-none transition-colors"
@@ -1136,19 +1300,19 @@ function Dashboard({
               {/* Cover */}
               <Field label={t("goLive.cover")}>
                 <CoverPicker
-                  url={channel.thumbnail_url}
+                  url={draftChannel.thumbnail_url}
                   uploading={uploading}
                   onPick={uploadCover}
-                  onClear={() => patchChannel({ thumbnail_url: "" })}
+                  onClear={() => patchDraft({ thumbnail_url: "" })}
                 />
               </Field>
 
               {/* Category */}
               <Field label={t("goLive.category")}>
                 <select
-                  value={channel.settings.category || ""}
+                  value={draftChannel.settings.category || ""}
                   onChange={(e) =>
-                    patchChannel({ settings: { category: e.target.value } })
+                    patchDraft({ settings: { category: e.target.value } })
                   }
                   className="w-full bg-bg-primary border border-border-pixel px-3 py-2 text-sm text-text-primary focus:border-accent-purple focus:outline-none transition-colors"
                 >
@@ -1165,17 +1329,17 @@ function Dashboard({
               <Field label={t("goLive.platforms")}>
                 <div className="flex flex-wrap gap-1.5">
                   {PLATFORM_OPTIONS.map((p) => {
-                    const active = (channel.settings.platforms || []).includes(p);
+                    const active = (draftChannel.settings.platforms || []).includes(p);
                     return (
                       <button
                         key={p}
                         type="button"
                         onClick={() => {
-                          const cur = channel.settings.platforms || [];
+                          const cur = draftChannel.settings.platforms || [];
                           const next = active
                             ? cur.filter((x) => x !== p)
                             : [...cur, p];
-                          patchChannel({ settings: { platforms: next } });
+                          patchDraft({ settings: { platforms: next } });
                         }}
                         className={`px-2.5 py-1 text-[10px] border-2 transition-colors ${
                           active
@@ -1194,9 +1358,9 @@ function Dashboard({
               <Field label={t("goLive.tags")}>
                 <input
                   type="text"
-                  value={channel.settings.tags || ""}
+                  value={draftChannel.settings.tags || ""}
                   onChange={(e) =>
-                    patchChannel({ settings: { tags: e.target.value } })
+                    patchDraft({ settings: { tags: e.target.value } })
                   }
                   placeholder={t("goLive.tagsPlaceholder")}
                   maxLength={200}
@@ -1205,13 +1369,20 @@ function Dashboard({
               </Field>
             </SettingsSection>
 
-            <SettingsSection title={t("goLive.section.projectInfo")} accentClass="text-accent-green">
+            <SettingsSection
+              title={t("goLive.section.projectInfo")}
+              accentClass="text-accent-green"
+              dirty={isSectionDirty("projectInfo")}
+              committing={committingSection === "projectInfo"}
+              committed={committedSection === "projectInfo"}
+              onCommit={() => commitSection("projectInfo")}
+            >
               <Field label={t("goLive.projectName")}>
                 <input
                   type="text"
-                  value={channel.project_name}
+                  value={draftChannel.project_name}
                   onChange={(e) =>
-                    patchChannel({ project_name: e.target.value })
+                    patchDraft({ project_name: e.target.value })
                   }
                   placeholder={t("goLive.projectQuestion")}
                   maxLength={200}
@@ -1221,9 +1392,9 @@ function Dashboard({
 
               <Field label={t("goLive.projectDesc")}>
                 <textarea
-                  value={channel.project_desc}
+                  value={draftChannel.project_desc}
                   onChange={(e) =>
-                    patchChannel({ project_desc: e.target.value })
+                    patchDraft({ project_desc: e.target.value })
                   }
                   placeholder={t("goLive.projectDescPlaceholder")}
                   rows={3}
@@ -1238,9 +1409,9 @@ function Dashboard({
                     <button
                       key={s.value}
                       type="button"
-                      onClick={() => patchChannel({ project_stage: s.value })}
+                      onClick={() => patchDraft({ project_stage: s.value })}
                       className={`px-2 py-1 text-[10px] border transition-colors ${
-                        channel.project_stage === s.value
+                        draftChannel.project_stage === s.value
                           ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
                           : "border-border-pixel text-text-secondary hover:border-text-secondary"
                       }`}
@@ -1254,8 +1425,8 @@ function Dashboard({
               <Field label={t("goLive.projectUrl")}>
                 <input
                   type="url"
-                  value={channel.project_url}
-                  onChange={(e) => patchChannel({ project_url: e.target.value })}
+                  value={draftChannel.project_url}
+                  onChange={(e) => patchDraft({ project_url: e.target.value })}
                   placeholder={t("goLive.projectUrlPlaceholder")}
                   maxLength={500}
                   className="w-full bg-bg-primary border border-border-pixel px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary/30 focus:border-accent-purple focus:outline-none transition-colors"
@@ -1263,16 +1434,23 @@ function Dashboard({
               </Field>
             </SettingsSection>
 
-            <SettingsSection title={t("goLive.section.tech")} accentClass="text-accent-cyan">
+            <SettingsSection
+              title={t("goLive.section.tech")}
+              accentClass="text-accent-cyan"
+              dirty={isSectionDirty("tech")}
+              committing={committingSection === "tech"}
+              committed={committedSection === "tech"}
+              onCommit={() => commitSection("tech")}
+            >
               <Field label={t("goLive.tool")}>
                 <div className="flex flex-wrap gap-1.5">
                   {TOOL_OPTIONS.map((tool) => (
                     <button
                       key={tool.key}
                       type="button"
-                      onClick={() => patchChannel({ coding_tool: tool.key })}
+                      onClick={() => patchDraft({ coding_tool: tool.key })}
                       className={`px-2.5 py-1 text-[10px] border-2 transition-colors ${
-                        channel.coding_tool === tool.key
+                        draftChannel.coding_tool === tool.key
                           ? "border-accent-purple text-accent-purple bg-accent-purple/10"
                           : "border-border-pixel text-text-secondary hover:border-text-secondary"
                       }`}
@@ -1289,9 +1467,9 @@ function Dashboard({
                     <button
                       key={q.value}
                       type="button"
-                      onClick={() => patchChannel({ quality: q.value })}
+                      onClick={() => patchDraft({ quality: q.value })}
                       className={`flex-1 py-1.5 text-[8px] font-[family-name:var(--font-pixel)] border-2 transition-colors ${
-                        channel.quality === q.value
+                        draftChannel.quality === q.value
                           ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
                           : "border-border-pixel text-text-secondary hover:border-text-secondary"
                       }`}
@@ -1305,21 +1483,28 @@ function Dashboard({
               </Field>
             </SettingsSection>
 
-            <SettingsSection title={t("goLive.section.chat")} accentClass="text-accent-pink">
+            <SettingsSection
+              title={t("goLive.section.chat")}
+              accentClass="text-accent-pink"
+              dirty={isSectionDirty("chat")}
+              committing={committingSection === "chat"}
+              committed={committedSection === "chat"}
+              onCommit={() => commitSection("chat")}
+            >
               {/* Slow mode */}
               <Field label={t("goLive.chat.slowMode")}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <ToggleButton
-                    enabled={!!channel.settings.slow_mode_enabled}
+                    enabled={!!draftChannel.settings.slow_mode_enabled}
                     onChange={(v) =>
-                      patchChannel({ settings: { slow_mode_enabled: v } })
+                      patchDraft({ settings: { slow_mode_enabled: v } })
                     }
                   />
                   <select
-                    value={channel.settings.slow_mode_seconds || 5}
-                    disabled={!channel.settings.slow_mode_enabled}
+                    value={draftChannel.settings.slow_mode_seconds || 5}
+                    disabled={!draftChannel.settings.slow_mode_enabled}
                     onChange={(e: ChangeEvent<HTMLSelectElement>) =>
-                      patchChannel({
+                      patchDraft({
                         settings: { slow_mode_seconds: Number(e.target.value) },
                       })
                     }
@@ -1359,12 +1544,36 @@ function Dashboard({
 function SettingsSection({
   title,
   accentClass,
+  dirty,
+  committing,
+  committed,
+  onCommit,
   children,
 }: {
   title: string;
   accentClass: string;
+  dirty: boolean;
+  committing: boolean;
+  committed: boolean;
+  onCommit: () => void;
   children: React.ReactNode;
 }) {
+  const { t } = useI18n();
+  // 状态优先级: 推送中 > 刚推送完 > 有未保存 > 已同步
+  const statusLabel = committing
+    ? t("goLive.section.updating")
+    : committed
+    ? t("goLive.section.updated")
+    : dirty
+    ? t("goLive.section.dirty")
+    : t("goLive.section.clean");
+  const statusColor = committing
+    ? "text-accent-yellow animate-pulse"
+    : committed
+    ? "text-accent-green"
+    : dirty
+    ? "text-accent-pink"
+    : "text-text-secondary/50";
   return (
     <div className="pixel-border bg-bg-card p-4 space-y-3">
       <div className="flex items-center gap-2">
@@ -1374,8 +1583,26 @@ function SettingsSection({
         <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
           {title}
         </span>
+        <div className="flex-1" />
+        <span className={`text-[9px] ${statusColor}`}>{statusLabel}</span>
       </div>
       <div className="space-y-3">{children}</div>
+      <div className="pt-2 border-t border-border-pixel/30 flex justify-end">
+        <button
+          type="button"
+          onClick={onCommit}
+          disabled={!dirty || committing}
+          className={`pixel-btn text-[9px] px-3 py-1.5 transition-colors ${
+            dirty && !committing
+              ? `border-accent-cyan text-accent-cyan hover:bg-accent-cyan hover:text-bg-primary`
+              : `border-border-pixel text-text-secondary/40 cursor-not-allowed`
+          }`}
+        >
+          {committing
+            ? t("goLive.section.updating")
+            : t("goLive.section.update")}
+        </button>
+      </div>
     </div>
   );
 }
