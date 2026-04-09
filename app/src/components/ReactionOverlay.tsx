@@ -27,6 +27,13 @@ export interface OverlayBurst {
   tier: 0 | 1 | 2 | 3;
   glowVar: string;
   color: string;
+  // Per-particle motion variation — every emoji animates uniquely
+  drift: number;     // -70..70 px end-position horizontal drift
+  rotStart: number;  // -25..25 deg
+  rotEnd: number;    // -120..120 deg
+  duration: number;  // ms — varies by tier + jitter
+  scale: number;     // 0.85..1.2 base scale
+  delay: number;     // ms — staggers particles within a single burst
 }
 
 export type ComboTier = 0 | 1 | 2 | 3;
@@ -42,7 +49,14 @@ export interface ComboState {
 
 const COMBO_WINDOW_MS = 3000;
 const TIER_THRESHOLDS = [0, 5, 15, 30]; // tier 0: <5, tier 1: 5-14, tier 2: 15-29, tier 3: 30+
-const MAX_BURSTS = 30;
+const MAX_BURSTS = 80; // ↑ from 30 — meltdown should feel chaotic, not capped
+
+// Particles emitted per click, by current tier of that kind
+const PARTICLES_PER_EVENT: Record<ComboTier, number> = { 0: 3, 1: 4, 2: 5, 3: 6 };
+
+function rand(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
 
 function getTier(count: number): ComboTier {
   if (count >= TIER_THRESHOLDS[3]) return 3;
@@ -57,7 +71,9 @@ export function useReactionSystem() {
   const [combo, setCombo] = useState<ComboState>({});
   const [showBanner, setShowBanner] = useState<{ icon: string; count: number; color: string } | null>(null);
   const [screenFlash, setScreenFlash] = useState(false);
+  const [screenShake, setScreenShake] = useState(false);
   const bannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shakeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Get the highest active combo tier across all kinds
   const maxTier: ComboTier = Object.values(combo).reduce(
@@ -78,40 +94,50 @@ export function useReactionSystem() {
       const timestamps = [...entry.timestamps.filter(t => t > cutoff), now];
       const tier = getTier(timestamps.length);
 
-      // Trigger tier 3 banner if just crossed threshold
+      // Tier 3 just crossed → meltdown impact: banner + screen flash + shake
       if (tier === 3 && entry.tier < 3) {
         if (bannerTimer.current) clearTimeout(bannerTimer.current);
+        if (shakeTimer.current) clearTimeout(shakeTimer.current);
         setShowBanner({ icon: cfg.icon, count: timestamps.length, color: cfg.color });
         setScreenFlash(true);
+        setScreenShake(true);
         setTimeout(() => setScreenFlash(false), 400);
+        shakeTimer.current = setTimeout(() => setScreenShake(false), 650);
         bannerTimer.current = setTimeout(() => setShowBanner(null), 2000);
       }
 
       return { ...prev, [kind]: { timestamps, tier } };
     });
 
-    // Add burst(s) based on current tier
+    // Spawn burst — multiple particles with randomized motion per particle.
+    // Read the freshly-computed tier from combo state via functional update.
     setCombo(prev => {
       const entry = prev[kind] || { timestamps: [], tier: 0 };
       const tier = entry.tier;
-      const burstCount = tier >= 2 ? 3 : tier >= 1 ? 2 : 1;
+      const burstCount = PARTICLES_PER_EVENT[tier];
 
       const newBursts: OverlayBurst[] = Array.from({ length: burstCount }, (_, i) => ({
         id: `${now}-${Math.random()}-${i}`,
         icon: cfg.icon,
-        x: 5 + Math.random() * 90,
+        x: 8 + Math.random() * 84,
         tier,
         glowVar: cfg.glowVar,
         color: cfg.color,
+        drift: rand(-70, 70),
+        rotStart: rand(-25, 25),
+        rotEnd: rand(-120, 120),
+        duration: 1800 + tier * 250 + rand(0, 500),
+        scale: rand(0.85, 1.2),
+        delay: i * rand(20, 90),
       }));
 
       setBursts(prev => [...prev.slice(-(MAX_BURSTS - burstCount)), ...newBursts]);
 
-      // Cleanup after animation
-      const duration = tier >= 3 ? 2800 : tier >= 2 ? 2500 : 2200;
+      // Cleanup after the longest particle (duration + delay) finishes
+      const maxLifetime = Math.max(...newBursts.map(b => b.duration + b.delay)) + 100;
       setTimeout(() => {
         setBursts(prev => prev.filter(b => !newBursts.some(nb => nb.id === b.id)));
-      }, duration);
+      }, maxLifetime);
 
       return prev;
     });
@@ -140,7 +166,7 @@ export function useReactionSystem() {
     return () => clearInterval(interval);
   }, []);
 
-  return { bursts, combo, maxTier, showBanner, screenFlash, addReaction };
+  return { bursts, combo, maxTier, showBanner, screenFlash, screenShake, addReaction };
 }
 
 // ── Overlay Component ──────────────────────────
@@ -160,7 +186,7 @@ export function ReactionOverlay({
         <div className="absolute inset-0 z-25 pointer-events-none screen-flash" />
       )}
 
-      {/* Reaction particles */}
+      {/* Reaction particles — each carries its own motion vars */}
       <div className="reaction-overlay">
         {bursts.map((b) => (
           <span
@@ -169,16 +195,15 @@ export function ReactionOverlay({
             style={{
               left: `${b.x}%`,
               "--reaction-glow": b.glowVar,
+              "--rise-drift": `${b.drift}px`,
+              "--rise-rot-start": `${b.rotStart}deg`,
+              "--rise-rot-end": `${b.rotEnd}deg`,
+              "--rise-duration": `${b.duration}ms`,
+              "--rise-scale": b.scale,
+              animationDelay: `${b.delay}ms`,
             } as React.CSSProperties}
           >
             {b.icon}
-            {/* Pixel burst particles for tier 1+ */}
-            {b.tier >= 1 && (
-              <span
-                className="reaction-burst"
-                style={{ color: `var(--${b.color})`, position: "absolute", top: "50%", left: "50%" }}
-              />
-            )}
           </span>
         ))}
 

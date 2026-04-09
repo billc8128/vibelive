@@ -276,12 +276,14 @@ function VideoArea({
   bursts,
   showBanner,
   screenFlash,
+  screenShake,
 }: {
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
   bursts: OverlayBurst[];
   showBanner: { icon: string; count: number; color: string } | null;
   screenFlash: boolean;
+  screenShake: boolean;
 }) {
   // OBS via Ingress 推上来的 track 源是 Camera, 不是 ScreenShare.
   // 同时订阅两类源, 优先选浏览器模式的 ScreenShare, fallback 到 OBS 的 Camera.
@@ -341,7 +343,7 @@ function VideoArea({
   }
 
   return (
-    <div className={`relative w-full h-full bg-bg-primary group ${screenFlash ? "screen-flash" : ""}`} ref={videoContainerRef}>
+    <div className={`relative w-full h-full bg-bg-primary group ${screenFlash ? "screen-flash" : ""} ${screenShake ? "video-shake" : ""}`} ref={videoContainerRef}>
       <VideoTrack trackRef={screenTrack} className="w-full h-full object-contain" />
       {/* Face cam PiP — 主播脸的小窗, 右下角, 屏幕共享时才显示 */}
       {faceCamTrack && (
@@ -419,6 +421,45 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
   const router = useRouter();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Click-time scatter particles — anchored to viewport via fixed positioning,
+  // so they're visible even on mobile chat tab where the video overlay is hidden.
+  type ClickBurstParticle = {
+    id: string;
+    x: number; y: number;       // origin in viewport px
+    dx: number; dy: number;     // outward target offset
+    icon: string;
+    glow: string;
+  };
+  const [clickBursts, setClickBursts] = useState<ClickBurstParticle[]>([]);
+  const spawnClickBurst = useCallback((rect: DOMRect, kind: ReactionKind) => {
+    const cfg = REACTION_CONFIG[kind];
+    if (!cfg) return;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const burstCount = 5;
+    const newBursts: ClickBurstParticle[] = Array.from({ length: burstCount }, (_, i) => {
+      // Upward cone: -90° ± 72°
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.8 * Math.PI;
+      const distance = 38 + Math.random() * 38;
+      return {
+        id: `cb-${Date.now()}-${i}-${Math.random()}`,
+        x: cx + (Math.random() - 0.5) * 12,
+        y: cy,
+        dx: Math.cos(angle) * distance,
+        dy: Math.sin(angle) * distance,
+        icon: cfg.icon,
+        glow: cfg.glowVar,
+      };
+    });
+    setClickBursts(prev => [...prev.slice(-25), ...newBursts]);
+    const ids = new Set(newBursts.map(b => b.id));
+    setTimeout(() => setClickBursts(prev => prev.filter(b => !ids.has(b.id))), 820);
+    // Mobile haptic — must run inside the user gesture to be reliable
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      try { navigator.vibrate(12); } catch {}
+    }
+  }, []);
 
   // Debounced save for streamer editing
   const saveField = useCallback(
@@ -658,7 +699,10 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
                 return (
                   <button
                     key={kind}
-                    onClick={() => sendReaction(kind)}
+                    onClick={(e) => {
+                      spawnClickBurst((e.currentTarget as HTMLElement).getBoundingClientRect(), kind);
+                      sendReaction(kind);
+                    }}
                     className={`flex-1 flex items-center justify-center gap-0.5 py-1.5 border transition-all text-xs active:scale-90 ${comboClass}`}
                     style={{
                       borderColor: tier > 0 ? `var(--${color})` : undefined,
@@ -901,6 +945,23 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
           ))}
         </div>
       )}
+
+      {/* Click-burst particles — viewport-anchored, work even when chat tab hides the video */}
+      {clickBursts.map((b) => (
+        <span
+          key={b.id}
+          className="click-scatter-particle"
+          style={{
+            left: `${b.x}px`,
+            top: `${b.y}px`,
+            "--scatter-x": `${b.dx}px`,
+            "--scatter-y": `${b.dy}px`,
+            "--scatter-glow": b.glow,
+          } as React.CSSProperties}
+        >
+          {b.icon}
+        </span>
+      ))}
     </div>
   );
 }
@@ -923,7 +984,7 @@ function WatchLayout({
 }) {
   const { t } = useI18n();
   const [desktop, setDesktop] = useState(false);
-  const { bursts, combo, showBanner, screenFlash, addReaction } = useReactionSystem();
+  const { bursts, combo, showBanner, screenFlash, screenShake, addReaction } = useReactionSystem();
 
   useEffect(() => {
     const check = () => setDesktop(window.innerWidth >= 1024);
@@ -932,7 +993,7 @@ function WatchLayout({
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  const videoProps = { bursts, showBanner, screenFlash };
+  const videoProps = { bursts, showBanner, screenFlash, screenShake };
   const sidebarProps = {
     viewerName: identity,
     roomName,
