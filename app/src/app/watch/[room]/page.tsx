@@ -295,12 +295,22 @@ function VideoArea({
     { onlySubscribed: true }
   );
   const participants = useParticipants();
+  // isViewerParticipant 排除主播/OBS ingress (canPublish), AI audience bot
+  // (ai-audience: 前缀), 以及首页 hover 卡片的临时连接 (hover- 前缀, commit 0e7cd81).
   const viewerCount = participants.filter(isViewerParticipant).length;
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const screenTrack =
-    tracks.find((tr) => tr.source === Track.Source.ScreenShare) ||
-    tracks.find((tr) => tr.source === Track.Source.Camera);
+  // 主画面: 优先 ScreenShare, 没有再退到 Camera (OBS 模式)
+  // 主播脸 (PiP): 仅当 ScreenShare 是主画面时, Camera 作为右下角小窗
+  //   - 浏览器模式开了摄像头: ScreenShare 主 + Camera PiP
+  //   - 仅屏幕共享: ScreenShare 主, 无 PiP
+  //   - 仅 Camera (OBS 或浏览器只开摄像头): Camera 主, 无 PiP
+  const screenShareTrack = tracks.find(
+    (tr) => tr.source === Track.Source.ScreenShare
+  );
+  const cameraTrack = tracks.find((tr) => tr.source === Track.Source.Camera);
+  const screenTrack = screenShareTrack || cameraTrack;
+  const faceCamTrack = screenShareTrack ? cameraTrack : undefined;
 
   // Capture the video element from VideoTrack via callback ref
   const videoContainerRef = useCallback((node: HTMLDivElement | null) => {
@@ -333,6 +343,18 @@ function VideoArea({
   return (
     <div className={`relative w-full h-full bg-bg-primary group ${screenFlash ? "screen-flash" : ""}`} ref={videoContainerRef}>
       <VideoTrack trackRef={screenTrack} className="w-full h-full object-contain" />
+      {/* Face cam PiP — 主播脸的小窗, 右下角, 屏幕共享时才显示 */}
+      {faceCamTrack && (
+        <div className="absolute bottom-3 right-3 z-30 w-32 sm:w-40 md:w-48 aspect-video pixel-border bg-bg-primary overflow-hidden shadow-lg pointer-events-none">
+          <VideoTrack
+            trackRef={faceCamTrack}
+            className="w-full h-full object-cover"
+          />
+          <span className="absolute top-1 left-1 font-[family-name:var(--font-pixel)] text-[7px] text-accent-yellow bg-black/40 px-1 py-0.5">
+            CAM
+          </span>
+        </div>
+      )}
       <ReactionOverlay bursts={bursts} showBanner={showBanner} screenFlash={screenFlash} />
 
       {/* HUD */}
@@ -378,6 +400,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
   const { t } = useI18n();
   const room = useRoomContext();
   const participants = useParticipants();
+  // 见 isViewerParticipant: 排除主播/OBS ingress, AI audience bot, hover 预览.
   const viewers = participants.filter(isViewerParticipant);
   const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
@@ -871,7 +894,8 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
             >
               <span className="w-2 h-2 rounded-full shrink-0 bg-accent-cyan" />
               <span className="text-xs text-text-primary truncate flex-1">
-                {p.identity}
+                {/* identity 是 `viewer-<nick>-<rand>` 的去重 ID,显示用 name */}
+                {p.name || p.identity}
               </span>
             </div>
           ))}
