@@ -80,6 +80,15 @@ const INTERNAL_CANVAS_H = 1000;
 interface CubismRendererLike {
   /** 默认 mask buffer 是 256x256, 严重欠采样 — 我们调高到 2048 修复 mask 锯齿/破洞 */
   setClippingMaskBufferSize(size: number): void;
+  /**
+   * Cubism 4 mask 有两种模式:
+   *  - low precision (默认 false): 所有 mask 挤在一张共享 RT, 按 sub-region 切分,
+   *    最多支持 ~16 个 mask group. saba1B 这种 VTS 模型几十个带 mask 的 drawable
+   *    (脸/眼/嘴/头发分层) 严重超载, 表现为 mask 整体失效, 角色"鬼影".
+   *  - high precision (true): 每个 drawable 重新 render mask, 无数量上限.
+   *    单 model 直播工作室完全可以承受这点 GPU 代价.
+   */
+  useHighPrecisionMask(high: boolean): void;
 }
 
 interface InternalModelLike {
@@ -218,16 +227,25 @@ export class Live2DRenderer implements SourceRenderer {
 
     app.stage.addChild(model);
 
-    // 6.5. 提高 mask 渲染分辨率 — 默认 256x256 在 800x1000 model canvas 上
-    //      会出现明显 mask 锯齿 / clip 边缘穿透. setClippingMaskBufferSize
-    //      会重建 framebuffer, 必须在 model 完全 initialize 后调.
+    // 6.5. 配置 cubism 4 渲染器:
+    //      A) 启用 high precision mask — 默认 low precision 在 saba1B 这种
+    //         有几十个 mask 的 VTS 模型上会爆 sub-region 数量上限, 表现为
+    //         mask 整体失效, 角色变"鬼影". high precision 每帧重 render
+    //         mask, 单模型场景代价可接受.
+    //      B) 把 mask 渲染分辨率从默认 256 提到 2048 — 即使在 high precision
+    //         模式下, 这个 buffer 决定单个 mask render texture 的分辨率,
+    //         越大边缘越锐利.
     //      try/catch 因为 Cubism2 model 没有 .renderer (我们只用 cubism4
     //      入口理论上不会, 但保险起见).
     try {
       const internal = (model as unknown as Live2DModelLike).internalModel;
+      // ⚠ 顺序: useHighPrecisionMask 先, setClippingMaskBufferSize 后.
+      // setClippingMaskBufferSize 会 release/recreate _clippingManager, 但
+      // _useHighPrecisionMask 是 renderer 自己的字段, 不受影响.
+      internal.renderer?.useHighPrecisionMask(true);
       internal.renderer?.setClippingMaskBufferSize(MASK_BUFFER_SIZE);
     } catch (e) {
-      console.warn("[live2d] setClippingMaskBufferSize 失败:", e);
+      console.warn("[live2d] cubism renderer 配置失败:", e);
     }
 
     this.model = model;
