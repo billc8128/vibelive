@@ -158,11 +158,24 @@ export class Live2DRenderer implements SourceRenderer {
 
     // 4. 创建 detached PIXI Application — 它自己的 canvas 不挂 DOM
     //    backgroundAlpha=0 → 透明背景, 让 compositor drawImage 只画到模型像素
+    //
+    // ⚠ antialias: false 是必须的!
+    //   开 antialias 时 PIXI 用 MSAA framebuffer 做 main render target.
+    //   Cubism 4 mask 用裸 gl.createFramebuffer 创建普通 color FBO, 并通过
+    //   _rendererProfile.save/restore 保存/恢复 PIXI 的 GL 状态. 该
+    //   save/restore 只存了 FRAMEBUFFER_BINDING 这一个 ID, 但 MSAA framebuffer
+    //   有 multisample attachment 等额外内部 state, cubism 在自己的 mask FBO
+    //   上写完再"切回 PIXI 的 framebuffer ID"时, MSAA resolve 没正确触发,
+    //   mask sampler 读到的 framebuffer 内容是 corrupt 的 → 视觉上 mask
+    //   完全失效, 所有 drawable 不被 clip, 整个角色变成图层堆叠的"鬼影".
+    //   关掉 antialias 后 main framebuffer 是单 sample 普通 color attachment,
+    //   跟 mask FBO 同种格式, 状态切换无歧义. 模型纹理本身高分辨率 + alpha
+    //   blend 软边, 视觉上几乎看不到锯齿.
     const app = new Application({
       width: INTERNAL_CANVAS_W,
       height: INTERNAL_CANVAS_H,
       backgroundAlpha: 0,
-      antialias: true,
+      antialias: false,
       autoStart: true,
       // PIXI 7 默认 view 是新建的 HTMLCanvasElement
     });
