@@ -6,6 +6,7 @@ import {
   type FaceLandmarkerResult,
 } from "@mediapipe/tasks-vision";
 import type { TrackingInputs } from "./vtube-config";
+import { studioConfig } from "./studio-config";
 
 // ────────────────────────────────────────────────────────────────
 // Singleton MediaPipe FaceLandmarker → VTube Studio tracking inputs.
@@ -255,14 +256,9 @@ class FaceTrackerImpl {
     const roll = Math.atan2(m10, m11);
     const RAD2DEG = 180 / Math.PI;
 
-    // ⚙ 校准 scale: MediaPipe 给的是 face canonical 坐标系下真实物理角度,
-    // 用户头转 45° 它给约 ±50°. 但 VTube Studio .vtube.json 是按 VTS 内置
-    // tracker 校准的, 那个 tracker 输出 ±20° 就到顶 (更"温和"). 我们直接
-    // 把 MediaPipe 度数喂给 vtube applier 会让 99% 时间被 clamp 在模型
-    // ParamAngleX 的 max 位置, 看起来"不动".
-    // 0.4 是经验值: ±50° 用户头转 → ±20° 输出, 跟 vtube.json 的 inputRange
-    // [-20, 20] 严格对齐. 如果觉得不够灵敏可以调 0.5-0.6, 觉得太抖调 0.3.
-    const HEAD_ANGLE_SCALE = 0.4;
+    // ⚙ 校准 scale: MediaPipe 物理角度太大, 跟 vtube.json 校准不匹配,
+    // 缩放后再喂. 默认 0.4, 通过 studio settings UI 可调.
+    const HEAD_ANGLE_SCALE = studioConfig.faceAngleScale;
 
     // ── 周期性诊断 log ─────────────────────────────────────────
     // 用字符串模板直接打印数值, 避免 Chrome console 把 array 折叠成
@@ -287,9 +283,10 @@ class FaceTrackerImpl {
     }
 
     // VTube Studio 习惯: 摄像头镜像 → 用户右转头, 模型也右转头.
-    // MediaPipe 给的是非镜像坐标, yaw 方向跟 VTS 相反 → 取负.
     // 乘 HEAD_ANGLE_SCALE 把 MediaPipe 的物理角度压到 VTS 的视觉角度区间.
-    const faceX = -yaw * RAD2DEG * HEAD_ANGLE_SCALE;
+    // 注: 之前对 yaw 取负想当然是错的 (用户报告"方向反"). MediaPipe matrix
+    // 已经是 face → camera 系, 直接 atan2 出来的 yaw 跟 VTS 同方向.
+    const faceX = yaw * RAD2DEG * HEAD_ANGLE_SCALE;
     const faceY = pitch * RAD2DEG * HEAD_ANGLE_SCALE;
     const faceZ = -roll * RAD2DEG * HEAD_ANGLE_SCALE;
 

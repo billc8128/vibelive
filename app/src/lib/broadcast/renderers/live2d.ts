@@ -15,6 +15,7 @@ import {
   type VtubeHotkey,
 } from "../vtube-config";
 import { ExpressionApplier } from "../expression-applier";
+import { studioConfig } from "../studio-config";
 
 // ────────────────────────────────────────────────────────────────
 // 真 Live2D renderer (Cubism 4 / VTube Studio 模型)
@@ -352,7 +353,7 @@ export class Live2DRenderer implements SourceRenderer {
         const dtMs = this.lastFrameTime === 0 ? 16 : now - this.lastFrameTime;
         this.lastFrameTime = now;
 
-        // 1) face tracking 先写
+        // 1) face tracking 先写到标准参数
         if (this.applier && this.latestInputs) {
           if (!this.didLogFirstApply) {
             this.didLogFirstApply = true;
@@ -362,18 +363,34 @@ export class Live2DRenderer implements SourceRenderer {
             );
           }
           this.applier.apply(internal.coreModel, this.latestInputs);
+        }
 
-          // 1.5) Alias mirror — vtube applier 写 ParamAngleX, 但 saba1B
-          //      这种模型的 deformer 实际 bind 在 ParamAngleMX/SX 上.
-          //      把标准参数的当前值复制到所有已知 alias.
-          if (this.aliasMirror.length > 0) {
-            const cm = internal.coreModel;
-            for (const [from, targets] of this.aliasMirror) {
-              const v = cm.getParameterValueById?.(from);
-              if (v !== undefined && Number.isFinite(v)) {
-                for (const t of targets) {
-                  cm.setParameterValueById(t, v);
-                }
+        // 2) 自己模拟呼吸 — cubism 内置 breath 写 ParamAngleY 但是 dummy.
+        //    在 ParamAngleY 上 add sin 波 (面捕的 set 之后 add), 让模型有
+        //    持续的轻微上下点头, 模拟自然呼吸. 振幅 / 频率从 studioConfig
+        //    读, 用户 UI 可调.
+        if (studioConfig.breathEnabled) {
+          const cm = internal.coreModel;
+          const t = performance.now() / 1000;
+          const breath =
+            Math.sin(t * 2 * Math.PI * studioConfig.breathFreqHz) *
+            studioConfig.breathAmpY;
+          const cur = cm.getParameterValueById?.("ParamAngleY") ?? 0;
+          if (Number.isFinite(cur)) {
+            cm.setParameterValueById("ParamAngleY", cur + breath);
+          }
+        }
+
+        // 3) Alias mirror — 把标准参数的当前值 (face apply + breath 之后)
+        //    复制到所有已知 alias (saba1B 的 ParamAngleMX/SX 等真驱动器).
+        //    必须在 breath 之后, 这样呼吸也会 mirror 到 alias.
+        if (this.aliasMirror.length > 0) {
+          const cm = internal.coreModel;
+          for (const [from, targets] of this.aliasMirror) {
+            const v = cm.getParameterValueById?.(from);
+            if (v !== undefined && Number.isFinite(v)) {
+              for (const t of targets) {
+                cm.setParameterValueById(t, v);
               }
             }
           }

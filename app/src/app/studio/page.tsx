@@ -15,6 +15,7 @@ import {
 import { SourceList } from "@/components/studio/SourceList";
 import { SourceInspector } from "@/components/studio/SourceInspector";
 import { AddSourceMenu } from "@/components/studio/AddSourceMenu";
+import { MotionSettingsPanel } from "@/components/studio/MotionSettingsPanel";
 
 // SceneCanvas import 链最终拉到 PIXI + pixi-live2d-display, 这两个库在
 // 模块顶层访问 window, Next.js prerender 阶段 (server) 会 ReferenceError.
@@ -284,12 +285,13 @@ export default function StudioPage() {
             )}
           </div>
 
-          {/* Right: Inspector */}
+          {/* Right: Inspector + Motion settings */}
           <div className="space-y-3">
             <h2 className="font-[family-name:var(--font-pixel)] text-[9px] text-accent-yellow uppercase tracking-wider px-1">
               属性 · Inspector
             </h2>
             <SourceInspector scene={scene} dispatch={dispatch} />
+            <MotionSettingsPanel />
           </div>
         </div>
 
