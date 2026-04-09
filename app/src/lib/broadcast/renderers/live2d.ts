@@ -94,9 +94,11 @@ interface CubismRendererLike {
 interface InternalModelLike {
   coreModel: {
     setParameterValueById(id: string, value: number, weight?: number): void;
-    /** 用来 enumerate 模型真实参数名, 排查 vtube.json 里的 ParamX 在不在 */
+    /** 用来 enumerate 模型真实参数名, 排查 vtube.json 里的 ParamX 在不在.
+     * Cubism4 没有 getParameterId(index) 方法, ID 存私有 _parameterIds 数组,
+     * 直接 cast 拿. */
     getParameterCount?(): number;
-    getParameterId?(index: number): string;
+    _parameterIds?: string[];
   };
   /** Cubism4InternalModel 上是 public 的, 直接 .renderer (cubism4.js#10797) */
   renderer?: CubismRendererLike;
@@ -278,30 +280,28 @@ export class Live2DRenderer implements SourceRenderer {
       // 对照. Cubism core 对不存在的 param 是 silent fail (写入 _notExist
       // 字典而不是 _parameterValues), 所以 vtube mapping 用错名字模型
       // 看起来"完全不响应"但 setParameterValueById 不报错.
+      // Cubism4 没有 public getParameterId(index), 直接读私有 _parameterIds 数组.
       try {
         const cm = (model as unknown as Live2DModelLike).internalModel.coreModel;
-        const count = cm.getParameterCount?.() ?? 0;
-        const realIds = new Set<string>();
-        for (let i = 0; i < count; i++) {
-          const id = cm.getParameterId?.(i);
-          if (id) realIds.add(id);
-        }
+        const ids = cm._parameterIds ?? [];
+        const realIds = new Set<string>(ids);
         const wantedIds = Array.from(new Set(config.mappings.map((m) => m.outputLive2D)));
         const present = wantedIds.filter((id) => realIds.has(id));
         const missing = wantedIds.filter((id) => !realIds.has(id));
         console.log(
-          `[live2d] 模型参数检查: ${count} 个真实参数, vtube 用 ${wantedIds.length} 个, 命中 ${present.length}, 缺失 ${missing.length}`
+          `[live2d] 模型参数检查: ${realIds.size} 个真实参数, vtube 用 ${wantedIds.length} 个, 命中 ${present.length}, 缺失 ${missing.length}`
         );
         if (missing.length > 0) {
           console.warn(
             "[live2d] vtube.json 引用了模型不存在的参数 (silent fail, 这些 mapping 写不进 model):",
             missing
           );
-          console.log(
-            "[live2d] 模型实际拥有的所有参数 ID:",
-            Array.from(realIds).sort()
-          );
         }
+        // 总是打印模型真实参数列表 — 看一眼就知道 saba1B 用的什么命名风格
+        console.log(
+          "[live2d] 模型实际拥有的所有参数 ID (" + realIds.size + " 个):",
+          Array.from(realIds).sort()
+        );
       } catch (e) {
         console.warn("[live2d] 参数 enumerate 失败:", e);
       }
