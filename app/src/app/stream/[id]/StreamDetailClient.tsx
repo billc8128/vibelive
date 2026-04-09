@@ -6,7 +6,6 @@ import Image from "next/image";
 import { Stream, CATEGORY_LABELS, PLATFORM_LABELS } from "@/lib/types";
 import { ToolBadge } from "@/components/ToolBadge";
 import { ProgressBar } from "@/components/ProgressBar";
-import { ReactionButtons } from "@/components/ReactionButtons";
 import { ChatPanel } from "@/components/ChatPanel";
 import { useI18n } from "@/lib/i18n/context";
 
@@ -16,7 +15,7 @@ interface StreamDetailClientProps {
 
 export function StreamDetailClient({ stream }: StreamDetailClientProps) {
   const { t } = useI18n();
-  const { streamer, project, status, codingTool, viewers, reactions, stages } =
+  const { streamer, project, status, codingTool, viewers, stages } =
     stream;
   const isLive = status === "live";
   const isAway = status === "away";
@@ -30,9 +29,6 @@ export function StreamDetailClient({ stream }: StreamDetailClientProps) {
     if (h === 0) return `${m}m`;
     return m > 0 ? `${h}h ${m}m` : `${h}h`;
   };
-
-  const totalReactions =
-    reactions.want_to_use + reactions.interesting + reactions.looking_forward;
 
   return (
     <div className="ambient-gradient min-h-screen">
@@ -156,14 +152,6 @@ export function StreamDetailClient({ stream }: StreamDetailClientProps) {
                 <div className="bg-gradient-to-t from-bg-primary/90 to-transparent p-3 pt-8">
                   <ProgressBar stages={stages} compact />
                 </div>
-              </div>
-            </div>
-
-            {/* ── Reaction Bar ─────────────────── */}
-            <div className="hud-panel p-3 flex items-center justify-between">
-              <ReactionButtons reactions={reactions} />
-              <div className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary hidden sm:block">
-                {t('stream.totalReactions')} <span className="text-accent-yellow">{totalReactions}</span>
               </div>
             </div>
 

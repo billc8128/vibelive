@@ -9,13 +9,7 @@ export interface RoomChatMessage {
   botPersona?: string;
 }
 
-export interface RoomReactionMessage {
-  type: "reaction";
-  kind: string;
-  user: string;
-}
-
-export type RoomDataMessage = RoomChatMessage | RoomReactionMessage;
+export type RoomDataMessage = RoomChatMessage;
 
 export interface ChatTimelineMessage {
   id: string;
@@ -51,18 +45,6 @@ export function parseRoomDataMessage(
         bot: parsed.bot === true,
         botPersona:
           typeof parsed.botPersona === "string" ? parsed.botPersona : undefined,
-      };
-    }
-
-    if (
-      parsed.type === "reaction" &&
-      typeof parsed.user === "string" &&
-      typeof parsed.kind === "string"
-    ) {
-      return {
-        type: "reaction",
-        kind: parsed.kind,
-        user: parsed.user,
       };
     }
   } catch {}

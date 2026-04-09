@@ -97,7 +97,7 @@ const CardContent = memo(function CardContent({
   onSelect: (stream: Stream) => void;
 }) {
   const { t } = useI18n();
-  const { streamer, project, status, codingTool, viewers, reactions, stages } =
+  const { streamer, project, status, codingTool, viewers, stages } =
     stream;
   const isLive = status === "live";
 
@@ -193,12 +193,6 @@ const CardContent = memo(function CardContent({
           </div>
         </div>
 
-        <div className="flex items-center gap-3 mt-2 font-[family-name:var(--font-pixel)] text-[6px] text-text-secondary">
-          <span className="text-accent-green">🚀 {reactions.want_to_use}</span>
-          <span className="text-accent-cyan">✨ {reactions.interesting}</span>
-          <span className="text-accent-orange">🔥 {reactions.looking_forward}</span>
-        </div>
-
         <div className="mt-2">
           <span className="pixel-tag text-[5px]">
             {t(`category.${project.category}`)}
@@ -218,7 +212,7 @@ function DetailPanel({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const { streamer, project, status, codingTool, viewers, reactions, stages } =
+  const { streamer, project, status, codingTool, viewers, stages } =
     stream;
   const isLive = status === "live";
   const completedStages = stages.filter((s) => s.completed).length;
@@ -318,24 +312,9 @@ function DetailPanel({
               </div>
             </div>
 
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-1 gap-2">
               {[
                 { label: t('stat.viewers_label'), value: viewers, color: "text-accent-pink" },
-                {
-                  label: t('reaction.want_to_use'),
-                  value: reactions.want_to_use,
-                  color: "text-accent-green",
-                },
-                {
-                  label: t('reaction.interesting'),
-                  value: reactions.interesting,
-                  color: "text-accent-cyan",
-                },
-                {
-                  label: t('reaction.looking_forward'),
-                  value: reactions.looking_forward,
-                  color: "text-accent-orange",
-                },
               ].map((s) => (
                 <div
                   key={s.label}
@@ -474,7 +453,6 @@ export default function ExplorePage() {
         status: "live" as const,
         codingTool: ((s.coding_tool as string) || "other") as Stream["codingTool"],
         viewers: (s.viewers_count as number) || 0,
-        reactions: { want_to_use: 0, interesting: 0, looking_forward: 0 },
         stages: [{ name: (s.stage as string) || "编码中", completed: false }],
         startedAt: s.started_at as string,
         totalDevTime: 0,

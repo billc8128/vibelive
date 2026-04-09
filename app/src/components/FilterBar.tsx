@@ -14,7 +14,7 @@ interface FilterBarProps {
   onFilterChange: (filters: {
     category: ProductCategory | null;
     platform: PlatformType | null;
-    sortBy: "viewers" | "reactions" | "recent";
+    sortBy: "viewers" | "recent";
   }) => void;
 }
 
@@ -24,7 +24,7 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
     useState<ProductCategory | null>(null);
   const [activePlatform, setActivePlatform] =
     useState<PlatformType | null>(null);
-  const [sortBy, setSortBy] = useState<"viewers" | "reactions" | "recent">(
+  const [sortBy, setSortBy] = useState<"viewers" | "recent">(
     "viewers"
   );
 
@@ -38,7 +38,7 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
     onFilterChange({ category: activeCategory, platform: plat, sortBy });
   };
 
-  const handleSort = (s: "viewers" | "reactions" | "recent") => {
+  const handleSort = (s: "viewers" | "recent") => {
     setSortBy(s);
     onFilterChange({ category: activeCategory, platform: activePlatform, sortBy: s });
   };
@@ -111,7 +111,6 @@ export function FilterBar({ onFilterChange }: FilterBarProps) {
         </span>
         {[
           { key: "viewers" as const, label: t('filter.sortViewers') },
-          { key: "reactions" as const, label: t('filter.sortReactions') },
           { key: "recent" as const, label: t('filter.sortRecent') },
         ].map((opt) => (
           <button

@@ -22,9 +22,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "live",
     codingTool: "cursor",
-    viewers: 128,
-    reactions: { want_to_use: 876, interesting: 1234, looking_forward: 543 },
-    stages: [
+    viewers: 128,    stages: [
       { name: "项目初始化", completed: true },
       { name: "UI 设计", completed: true },
       { name: "核心功能开发", completed: false },
@@ -55,9 +53,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "live",
     codingTool: "windsurf",
-    viewers: 87,
-    reactions: { want_to_use: 678, interesting: 321, looking_forward: 987 },
-    stages: [
+    viewers: 87,    stages: [
       { name: "需求分析", completed: true },
       { name: "数据接口", completed: true },
       { name: "图表组件", completed: true },
@@ -88,9 +84,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "live",
     codingTool: "claude-code",
-    viewers: 65,
-    reactions: { want_to_use: 777, interesting: 888, looking_forward: 999 },
-    stages: [
+    viewers: 65,    stages: [
       { name: "架构设计", completed: true },
       { name: "视频上传", completed: true },
       { name: "AI 分析引擎", completed: true },
@@ -121,9 +115,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "away",
     codingTool: "bolt",
-    viewers: 35,
-    reactions: { want_to_use: 555, interesting: 222, looking_forward: 111 },
-    stages: [
+    viewers: 35,    stages: [
       { name: "原型设计", completed: true },
       { name: "角色系统", completed: true },
       { name: "任务引擎", completed: false },
@@ -153,9 +145,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "live",
     codingTool: "copilot",
-    viewers: 95,
-    reactions: { want_to_use: 765, interesting: 432, looking_forward: 876 },
-    stages: [
+    viewers: 95,    stages: [
       { name: "通信协议", completed: true },
       { name: "翻译引擎", completed: true },
       { name: "聊天界面", completed: true },
@@ -186,9 +176,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "offline",
     codingTool: "cursor",
-    viewers: 0,
-    reactions: { want_to_use: 850, interesting: 250, looking_forward: 350 },
-    stages: [
+    viewers: 0,    stages: [
       { name: "课程体系", completed: true },
       { name: "代码沙箱", completed: true },
       { name: "AI 出题引擎", completed: true },
@@ -219,9 +207,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "live",
     codingTool: "copilot",
-    viewers: 42,
-    reactions: { want_to_use: 999, interesting: 101, looking_forward: 202 },
-    stages: [
+    viewers: 42,    stages: [
       { name: "架构设计", completed: true },
       { name: "解析引擎", completed: true },
       { name: "AI 审查逻辑", completed: true },
@@ -252,9 +238,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "offline",
     codingTool: "replit",
-    viewers: 0,
-    reactions: { want_to_use: 600, interesting: 300, looking_forward: 150 },
-    stages: [
+    viewers: 0,    stages: [
       { name: "需求调研", completed: true },
       { name: "UI 原型", completed: true },
       { name: "训练算法", completed: true },
@@ -285,9 +269,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "offline",
     codingTool: "cursor",
-    viewers: 0,
-    reactions: { want_to_use: 412, interesting: 634, looking_forward: 289 },
-    stages: [
+    viewers: 0,    stages: [
       { name: "数据模型", completed: true },
       { name: "消费分析", completed: true },
       { name: "预算引擎", completed: false },
@@ -318,9 +300,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "offline",
     codingTool: "v0",
-    viewers: 0,
-    reactions: { want_to_use: 580, interesting: 450, looking_forward: 230 },
-    stages: [
+    viewers: 0,    stages: [
       { name: "平台接入", completed: true },
       { name: "内容生成", completed: true },
       { name: "调度引擎", completed: true },
@@ -352,9 +332,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "offline",
     codingTool: "windsurf",
-    viewers: 0,
-    reactions: { want_to_use: 891, interesting: 123, looking_forward: 456 },
-    stages: [
+    viewers: 0,    stages: [
       { name: "核心编辑器", completed: true },
       { name: "AI 整理引擎", completed: true },
       { name: "实时协作", completed: true },
@@ -385,9 +363,7 @@ export const MOCK_STREAMS: Stream[] = [
     },
     status: "away",
     codingTool: "bolt",
-    viewers: 19,
-    reactions: { want_to_use: 345, interesting: 789, looking_forward: 210 },
-    stages: [
+    viewers: 19,    stages: [
       { name: "游戏引擎", completed: true },
       { name: "地图生成", completed: true },
       { name: "战斗系统", completed: false },

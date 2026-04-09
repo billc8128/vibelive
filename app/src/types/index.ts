@@ -5,8 +5,6 @@
 
 // --- 基础类型 ---
 
-export type ReactionType = 'want_to_use' | 'interesting' | 'excited';
-
 export type StreamStatus = 'live' | 'ended' | 'scheduled' | 'paused';
 
 export type ProjectCategory =
@@ -75,7 +73,6 @@ export interface Project {
   tags: string[];
   status: 'in_development' | 'completed' | 'published';
   productUrl?: string; // 完成后的产品链接
-  reactions: ReactionCounts;
   totalViewers: number;
   devTimeMinutes: number;
   stages: DevStageInfo[];
@@ -94,19 +91,12 @@ export interface Stream {
   thumbnailUrl: string;
   viewerCount: number;
   peakViewers: number;
-  reactions: ReactionCounts;
   detectedTool: CodingTool | null;
   currentStage: DevStage;
   startedAt: string;
   endedAt?: string;
   durationMinutes?: number;
   tags: string[];
-}
-
-export interface ReactionCounts {
-  want_to_use: number;
-  interesting: number;
-  excited: number;
 }
 
 export interface DevStageInfo {
@@ -125,7 +115,7 @@ export interface ChatMessage {
   avatarUrl: string;
   content: string;
   timestamp: string;
-  type: 'text' | 'reaction' | 'system';
+  type: 'text' | 'system';
 }
 
 export interface Category {

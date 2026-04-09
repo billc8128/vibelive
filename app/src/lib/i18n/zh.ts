@@ -50,10 +50,8 @@ export const zh = {
   // ── Stats ─────────────────────────────────
   "stat.liveNow": "正在直播",
   "stat.viewers": "在线观众",
-  "stat.totalReactions": "总反应数",
   "stat.totalProjects": "项目总数",
   "stat.viewers_label": "观众",
-  "stat.totalReaction": "总反应",
 
   // ── Home Page ─────────────────────────────
   "home.followingLive": "关注的人正在直播",
@@ -78,7 +76,6 @@ export const zh = {
   "filter.sort": "排序",
   "filter.all": "全部",
   "filter.sortViewers": "观看最多",
-  "filter.sortReactions": "最热反应",
   "filter.sortRecent": "最新开始",
 
   // ── Categories ────────────────────────────
@@ -109,13 +106,6 @@ export const zh = {
   "tool.bolt": "Bolt",
   "tool.replit": "Replit",
   "tool.other": "其他",
-
-  // ── Reactions ─────────────────────────────
-  "reaction.want_to_use": "想用",
-  "reaction.interesting": "有趣",
-  "reaction.looking_forward": "期待",
-  "reaction.mind_blown": "炸裂",
-  "reaction.big_brain": "高手",
 
   // ── Profile Page ──────────────────────────
   "profile.tab.streams": "我的直播",
@@ -291,7 +281,6 @@ export const zh = {
   "stream.awayDesc": "请稍候，直播很快恢复",
   "stream.completedTitle": "项目已完成",
   "stream.tryProduct": "试用成品",
-  "stream.totalReactions": "总反应",
   "stream.hideChat": "隐藏聊天",
   "stream.showChat": "显示聊天",
 
@@ -343,16 +332,11 @@ export const zh = {
   "time.minutes": "{m}分钟",
 
   // ── Ticker ────────────────────────────────
-  "ticker.wantToUse": "{user} 对 {project} 点了「想用」",
-  "ticker.interesting": "{user} 觉得 {project} 「有趣」",
-  "ticker.lookingForward": "{user} 「期待」{project} 上线",
   "ticker.startedStreaming": "{user} 开始直播 {project}",
-  "ticker.reactions": "{user} 的 {project} 获得 {count} 个反应",
   "ticker.using": "{user} 正在用 {tool} 开发 {project}",
   "ticker.phase": "{user} 的 {project} 进入{phase}阶段",
   "ticker.launched": "{user} 的 {project} 已上线！",
   "ticker.published": "{project} 已发布 — 快去试用！",
-  "ticker.wantToUseCount": "{project} 获得 {count} 个「想用」反应",
   "ticker.building": "{user} 的 {project} 正在构建{phase}",
 
   // ── Meta ──────────────────────────────────
