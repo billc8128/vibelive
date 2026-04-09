@@ -26,11 +26,13 @@ const SceneCanvas = dynamic(
   { ssr: false }
 );
 
-// react-moveable 同样在模块顶层访问 window — dynamic + ssr:false
-const SourceMoveableOverlay = dynamic(
+// SourceCanvasOverlay — 自己写的 OBS-style canvas overlay (drag /
+// resize / snap / context menu). 不依赖 react-moveable. dynamic ssr:false
+// 因为它用 ResizeObserver + PointerEvent 等浏览器 API.
+const SourceCanvasOverlay = dynamic(
   () =>
-    import("@/components/studio/SourceMoveableOverlay").then(
-      (m) => m.SourceMoveableOverlay
+    import("@/components/studio/SourceCanvasOverlay").then(
+      (m) => m.SourceCanvasOverlay
     ),
   { ssr: false }
 );
@@ -81,38 +83,35 @@ export default function StudioPage() {
   // Compositor 输出 canvas 的 ref — 父组件持有, 推流时直接 captureStream
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // StudioPublisher 实例 — 跨 re-render 持久, 用 ref 避免触发 setState 循环
-  const publisherRef = useRef<StudioPublisher | null>(null);
-  if (!publisherRef.current) {
-    publisherRef.current = new StudioPublisher();
-  }
+  // StudioPublisher 实例 — useState lazy init 跨 re-render 持久,
+  // 比 useRef 干净, 不会触发 React 19 的 "Cannot access refs during render" lint.
+  const [publisher] = useState(() => new StudioPublisher());
   const [pubSnap, setPubSnap] = useState<PublisherSnapshot>(
-    () => publisherRef.current!.snapshot
+    () => publisher.snapshot
   );
 
   // 订阅 publisher 状态 → 同步到 React state
   useEffect(() => {
-    const publisher = publisherRef.current!;
     const unsubscribe = publisher.subscribe((s) => setPubSnap(s));
     return () => {
       unsubscribe();
       // 离开页面时主动停止推流, 避免后台留连接
       publisher.stop().catch(() => {});
     };
-  }, []);
+  }, [publisher]);
 
   const handleStartPublish = async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     try {
-      await publisherRef.current!.start(canvas, { withMic });
+      await publisher.start(canvas, { withMic });
     } catch {
       // start 内部已经 setSnap("error"), UI 自动显示错误
     }
   };
 
   const handleStopPublish = async () => {
-    await publisherRef.current!.stop();
+    await publisher.stop();
   };
 
   const isPublishBusy = pubSnap.state === "starting" || pubSnap.state === "stopping";
@@ -266,8 +265,9 @@ export default function StudioPage() {
                   });
                 }}
               />
-              {/* 拖拽 / 调整大小 overlay — 直接在 canvas 上操作 source */}
-              <SourceMoveableOverlay
+              {/* OBS-style overlay — drag / 8 handles resize / snap /
+                  context menu / keyboard shortcuts. 直接在 canvas 上操作. */}
+              <SourceCanvasOverlay
                 scene={scene}
                 dispatch={dispatch}
                 canvasRef={canvasRef}

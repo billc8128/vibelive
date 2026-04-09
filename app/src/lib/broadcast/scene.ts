@@ -36,7 +36,9 @@ export type SceneAction =
   | { type: "updateTransform"; id: string; patch: Partial<TransformBox> }
   | { type: "updateSource"; id: string; patch: Partial<Source> }
   | { type: "moveUp"; id: string }
-  | { type: "moveDown"; id: string };
+  | { type: "moveDown"; id: string }
+  | { type: "bringToFront"; id: string }
+  | { type: "sendToBack"; id: string };
 
 // ────────────────────────────────────────────────────────────────
 // Reducer
@@ -125,6 +127,36 @@ export function sceneReducer(state: Scene, action: SceneAction): Scene {
             : s
         ),
       };
+
+    case "bringToFront": {
+      const maxZ = state.sources.reduce(
+        (m, s) => Math.max(m, s.transform.z),
+        0
+      );
+      return {
+        ...state,
+        sources: state.sources.map((s) =>
+          s.id === action.id
+            ? { ...s, transform: { ...s.transform, z: maxZ + 1 } }
+            : s
+        ),
+      };
+    }
+
+    case "sendToBack": {
+      const minZ = state.sources.reduce(
+        (m, s) => Math.min(m, s.transform.z),
+        0
+      );
+      return {
+        ...state,
+        sources: state.sources.map((s) =>
+          s.id === action.id
+            ? { ...s, transform: { ...s.transform, z: minZ - 1 } }
+            : s
+        ),
+      };
+    }
 
     default: {
       // Exhaustiveness check — 如果以后加了新 action 忘了处理, TS 会报错
