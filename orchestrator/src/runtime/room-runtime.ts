@@ -16,8 +16,14 @@ import {
   type ScreenshotSummarizer,
 } from "./screenshot-summarizer.js";
 import { TranscriptWindow } from "./transcript-window.js";
-import { readConfig } from "../config.js";
+import { readConfig, type OpenRouterModelConfig } from "../config.js";
 import type { AiAudienceIntensity } from "../types.js";
+import {
+  usageRecorder,
+  type InMemoryUsageRecorder,
+  type OpenRouterUsage,
+  type UsageOperation,
+} from "./usage-recorder.js";
 
 interface RoomRuntimeDependencies {
   observer?: LiveKitObserver;
@@ -27,6 +33,7 @@ interface RoomRuntimeDependencies {
   mediaSnapshotter?: MediaSnapshotter;
   screenshotSummarizer?: ScreenshotSummarizer | null;
   transcriptWindow?: TranscriptWindow;
+  usageRecorder?: InMemoryUsageRecorder;
   now?: () => number;
   random?: () => number;
 }
@@ -56,6 +63,8 @@ export class RoomRuntime {
   private readonly mediaSnapshotter: MediaSnapshotter;
   private readonly screenshotSummarizer: ScreenshotSummarizer | null;
   private readonly transcriptWindow: TranscriptWindow;
+  private readonly usageRecorder: InMemoryUsageRecorder;
+  private readonly modelConfig: OpenRouterModelConfig | null;
   private readonly now: () => number;
   private readonly random: () => number;
   private personaCursor = 0;
@@ -73,9 +82,11 @@ export class RoomRuntime {
     this.agentRunner = deps.agentRunner ?? new AgentRunner();
     this.gate = deps.gate ?? new MessageGate();
     this.mediaSnapshotter = deps.mediaSnapshotter ?? new MediaSnapshotter();
+    this.modelConfig = readConfig().model;
     this.screenshotSummarizer =
-      deps.screenshotSummarizer ?? createScreenshotSummarizer(readConfig().model);
+      deps.screenshotSummarizer ?? createScreenshotSummarizer(this.modelConfig);
     this.transcriptWindow = deps.transcriptWindow ?? new TranscriptWindow();
+    this.usageRecorder = deps.usageRecorder ?? usageRecorder;
     this.now = deps.now ?? Date.now;
     this.random = deps.random ?? Math.random;
   }
@@ -140,6 +151,13 @@ export class RoomRuntime {
     let gateRejectedCount = 0;
     for (const persona of orderedPersonas) {
       const decision = await this.agentRunner.decide(persona, packet);
+      this.recordUsage("agent_decide", decision.usage, {
+        personaKey: persona.key,
+        decision: decision.type,
+        hasScreenshot:
+          !!packet.latestScreenshot || !!packet.latestScreenshotSummary,
+        hasVideo: !!packet.latestVideoClip,
+      });
       if (decision.type !== "speak") {
         heldCount += 1;
         continue;
@@ -212,6 +230,15 @@ export class RoomRuntime {
           try {
             const summary = await this.screenshotSummarizer.summarize(event.url);
             this.mediaSnapshotter.setLatestScreenshotSummary(summary);
+            this.recordUsage(
+              "screenshot_summary",
+              this.screenshotSummarizer.getLastUsage?.() ?? null,
+              {
+                decision: summary ? "summary" : "hold",
+                hasScreenshot: true,
+                hasVideo: false,
+              },
+            );
           } catch (error) {
             console.warn("screenshot summary failed", {
               roomSlug: this.roomSlug,
@@ -239,5 +266,33 @@ export class RoomRuntime {
 
   getChatInjector() {
     return this.chatInjector;
+  }
+
+  private recordUsage(
+    operation: UsageOperation,
+    usage: OpenRouterUsage | null | undefined,
+    metadata: {
+      personaKey?: string;
+      decision?: string;
+      hasScreenshot: boolean;
+      hasVideo: boolean;
+    },
+  ) {
+    if (!usage) {
+      return;
+    }
+
+    this.usageRecorder.record({
+      roomSlug: this.roomSlug,
+      channelId: this.payload.channelId,
+      operation,
+      personaKey: metadata.personaKey,
+      modelProvider: this.modelConfig?.provider ?? "unknown",
+      modelName: this.modelConfig?.name ?? "unknown",
+      decision: metadata.decision,
+      hasScreenshot: metadata.hasScreenshot,
+      hasVideo: metadata.hasVideo,
+      usage,
+    });
   }
 }

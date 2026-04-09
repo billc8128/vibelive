@@ -1,14 +1,16 @@
 import type { OpenRouterModelConfig } from "../config.js";
 import type { ContextPacket } from "./context-packet.js";
 import type { Persona } from "./personas.js";
+import type { OpenRouterUsage } from "./usage-recorder.js";
 
 export type AgentDecision =
-  | { type: "hold" }
+  | { type: "hold"; usage?: OpenRouterUsage }
   | {
       type: "speak";
       text: string;
       target?: "streamer" | "viewer";
       reason?: string;
+      usage?: OpenRouterUsage;
     };
 
 export interface ModelClient {
@@ -217,6 +219,15 @@ function extractMessageContent(payload: unknown): string {
   }
 
   throw new Error("Missing model content");
+}
+
+function extractUsage(payload: unknown): OpenRouterUsage | undefined {
+  const usage = (payload as { usage?: OpenRouterUsage })?.usage;
+  if (!usage || typeof usage !== "object") {
+    return undefined;
+  }
+
+  return usage;
 }
 
 function summarizeRawContent(raw: string) {
@@ -443,9 +454,18 @@ export class OpenRouterModelClient implements ModelClient {
 
     const payload = (await response.json()) as unknown;
     const raw = extractMessageContent(payload);
+    const usage = extractUsage(payload);
 
     try {
-      return parseDecision(raw);
+      const decision = parseDecision(raw);
+      if (!usage) {
+        return decision;
+      }
+
+      return {
+        ...decision,
+        usage,
+      };
     } catch (error) {
       throw new Error(`Invalid model decision JSON: ${summarizeRawContent(raw)}`, {
         cause: error,

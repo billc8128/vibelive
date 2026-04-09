@@ -9,6 +9,12 @@ describe("OpenRouterModelClient", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
+          usage: {
+            prompt_tokens: 1200,
+            completion_tokens: 60,
+            total_tokens: 1260,
+            cost: 0.00078,
+          },
           choices: [
             {
               message: {
@@ -51,6 +57,12 @@ describe("OpenRouterModelClient", () => {
       text: "Would you split this into a smaller pass first?",
       target: "streamer",
       reason: "openrouter",
+      usage: {
+        prompt_tokens: 1200,
+        completion_tokens: 60,
+        total_tokens: 1260,
+        cost: 0.00078,
+      },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(

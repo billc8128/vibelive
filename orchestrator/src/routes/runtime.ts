@@ -8,6 +8,10 @@ import type {
 } from "../types.js";
 import { RoomManager } from "../runtime/room-manager.js";
 import { RoomRuntime } from "../runtime/room-runtime.js";
+import {
+  usageRecorder,
+  type InMemoryUsageRecorder,
+} from "../runtime/usage-recorder.js";
 
 function authorizeRequest(
   request: FastifyRequest,
@@ -26,7 +30,14 @@ export function registerRuntimeRoutes(
   app: FastifyInstance,
   config: OrchestratorConfig,
   roomManager = new RoomManager(),
+  recorder: InMemoryUsageRecorder = usageRecorder,
 ) {
+  app.get("/runtime/usage", async (request, reply) => {
+    if (!authorizeRequest(request, reply, config)) return reply;
+
+    return recorder.summary();
+  });
+
   app.post("/runtime/start", async (request, reply) => {
     if (!authorizeRequest(request, reply, config)) return reply;
 
@@ -35,10 +46,15 @@ export function registerRuntimeRoutes(
       return reply.code(400).send({ error: "roomSlug is required" });
     }
 
-    const runtime = new RoomRuntime({
-      ...payload,
-      roomSlug: payload.roomSlug.trim(),
-    });
+    const runtime = new RoomRuntime(
+      {
+        ...payload,
+        roomSlug: payload.roomSlug.trim(),
+      },
+      {
+        usageRecorder: recorder,
+      },
+    );
     await runtime.start();
     roomManager.register(payload.roomSlug.trim(), runtime);
 

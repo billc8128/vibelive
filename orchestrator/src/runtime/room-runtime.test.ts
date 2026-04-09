@@ -7,6 +7,7 @@ import { NullModelClient, type ModelClient } from "./model-client.js";
 import type { ContextPacket } from "./context-packet.js";
 import type { Persona } from "./personas.js";
 import type { ScreenshotSummary } from "./screenshot-summarizer.js";
+import { InMemoryUsageRecorder } from "./usage-recorder.js";
 
 describe("RoomRuntime", () => {
   afterEach(() => {
@@ -37,6 +38,7 @@ describe("RoomRuntime", () => {
   });
 
   it("publishes bot messages when an agent decides to speak", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
     class SpeakOnceModelClient implements ModelClient {
       async decide(persona: Persona, _packet: ContextPacket) {
         if (persona.key !== "curious") return { type: "hold" } as const;
@@ -44,14 +46,22 @@ describe("RoomRuntime", () => {
         return {
           type: "speak" as const,
           text: "Why not ship a narrower MVP first?",
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 60,
+            total_tokens: 1060,
+            cost: 0.00068,
+          },
         };
       }
     }
 
+    const usageRecorder = new InMemoryUsageRecorder();
     const chatInjector = new ChatInjector("demo-room", null);
     const runtime = new RoomRuntime(
       {
         roomSlug: "demo-room",
+        channelId: "channel-1",
         roomTitle: "Demo Room",
         projectStage: "coding",
         codingTool: "cursor",
@@ -59,6 +69,7 @@ describe("RoomRuntime", () => {
       {
         agentRunner: new AgentRunner(new SpeakOnceModelClient()),
         chatInjector,
+        usageRecorder,
       },
     );
 
@@ -72,6 +83,17 @@ describe("RoomRuntime", () => {
         botPersona: "curious",
       }),
     );
+    expect(usageRecorder.summary().recentEvents[0]).toMatchObject({
+      roomSlug: "demo-room",
+      channelId: "channel-1",
+      operation: "agent_decide",
+      personaKey: "curious",
+      decision: "speak",
+      usage: {
+        total_tokens: 1060,
+        cost: 0.00068,
+      },
+    });
   });
 
   it("rotates speaking personas across ticks instead of always starting from the first persona", async () => {
@@ -133,6 +155,16 @@ describe("RoomRuntime", () => {
       currentTaskSummary: "主播在调试 AI audience",
       suggestedAngles: ["为什么先动 prompt"],
     };
+    const usageRecorder = new InMemoryUsageRecorder();
+    const screenshotSummarizer = {
+      summarize: async () => screenshotSummary,
+      getLastUsage: () => ({
+        prompt_tokens: 900,
+        completion_tokens: 100,
+        total_tokens: 1000,
+        cost: 0.0007,
+      }),
+    };
 
     class CapturePacketModelClient implements ModelClient {
       async decide(_persona: Persona, packet: ContextPacket) {
@@ -151,9 +183,8 @@ describe("RoomRuntime", () => {
       {
         agentRunner: new AgentRunner(new CapturePacketModelClient()),
         chatInjector: new ChatInjector("demo-room", null),
-        screenshotSummarizer: {
-          summarize: async () => screenshotSummary,
-        },
+        screenshotSummarizer,
+        usageRecorder,
       },
     );
 
@@ -183,6 +214,16 @@ describe("RoomRuntime", () => {
       capturedAt: 123456,
     });
     expect(seenPacket!.latestScreenshotSummary).toEqual(screenshotSummary);
+    expect(usageRecorder.summary().recentEvents[0]).toMatchObject({
+      operation: "screenshot_summary",
+      decision: "summary",
+      hasScreenshot: true,
+      hasVideo: false,
+      usage: {
+        total_tokens: 1000,
+        cost: 0.0007,
+      },
+    });
   });
 
   it("feeds mirrored video clips into the next model packet", async () => {

@@ -1,4 +1,5 @@
 import type { OpenRouterModelConfig } from "../config.js";
+import type { OpenRouterUsage } from "./usage-recorder.js";
 
 export interface ScreenshotSummary {
   uiLanguage: "zh" | "en" | "mixed" | "unknown";
@@ -24,6 +25,7 @@ export interface ScreenshotSummary {
 
 export interface ScreenshotSummarizer {
   summarize(imageUrl: string): Promise<ScreenshotSummary | null>;
+  getLastUsage?(): OpenRouterUsage | null;
 }
 
 function stripJsonFences(raw: string) {
@@ -183,6 +185,7 @@ function normalizeSummary(
 
 export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
   private readonly apiUrl: string;
+  private lastUsage: OpenRouterUsage | null = null;
 
   constructor(
     private readonly config: Pick<
@@ -291,6 +294,9 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
 
     const payload = (await response.json()) as unknown;
     const raw = extractMessageContent(payload);
+    this.lastUsage =
+      ((payload as { usage?: OpenRouterUsage })?.usage as OpenRouterUsage) ??
+      null;
 
     try {
       return normalizeSummary(
@@ -304,6 +310,10 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
         },
       );
     }
+  }
+
+  getLastUsage() {
+    return this.lastUsage;
   }
 }
 

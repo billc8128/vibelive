@@ -7,6 +7,12 @@ describe("OpenRouterScreenshotSummarizer", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
+          usage: {
+            prompt_tokens: 900,
+            completion_tokens: 120,
+            total_tokens: 1020,
+            cost: 0.00081,
+          },
           choices: [
             {
               message: {
@@ -90,6 +96,12 @@ describe("OpenRouterScreenshotSummarizer", () => {
         }),
       ]),
     );
+    expect(summarizer.getLastUsage()).toEqual({
+      prompt_tokens: 900,
+      completion_tokens: 120,
+      total_tokens: 1020,
+      cost: 0.00081,
+    });
   });
 
   it("includes the upstream error body when screenshot summarization fails", async () => {

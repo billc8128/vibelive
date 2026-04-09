@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildSignedOrchestratorHeaders,
+  getAiAudienceUsageSummary,
   sendAiAudienceContextEvent,
 } from "./client";
 
@@ -78,5 +79,41 @@ describe("sendAiAudienceContextEvent", () => {
         }),
       }),
     );
+  });
+});
+
+describe("getAiAudienceUsageSummary", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("fetches aggregated usage from the orchestrator usage endpoint", async () => {
+    vi.stubEnv("AI_AUDIENCE_ORCHESTRATOR_URL", "https://orchestrator.example");
+    vi.stubEnv("AI_AUDIENCE_ORCHESTRATOR_SECRET", "shared-secret");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        totals: { requests: 1, totalCost: 0.00065 },
+        byOperation: [],
+        byModel: [],
+        byPersona: [],
+        byRoom: [],
+        recentEvents: [],
+      }),
+    );
+
+    const summary = await getAiAudienceUsageSummary();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://orchestrator.example/runtime/usage",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          "x-orchestrator-secret": "shared-secret",
+        }),
+        cache: "no-store",
+      }),
+    );
+    expect(summary?.totals.totalCost).toBe(0.00065);
   });
 });
