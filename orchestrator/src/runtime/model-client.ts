@@ -53,6 +53,7 @@ function buildSystemPrompt(persona: Persona, packet: ContextPacket) {
     "Mix questions with observations, evaluations, suggestions, and light hype when that fits the persona and context.",
     "A useful statement can praise a good move, point at a better high-level option, or react to the stream vibe.",
     "Avoid overfitting to exact on-screen terms; infer the higher-level activity and make a related viewer comment.",
+    "When the latest human chat is confused by or critical of recent bot messages, recover with a simpler, less technical, more grounded viewer comment instead of going silent just because the previous bot topic was bad.",
     "Good chat messages are easy to answer in 5-10 seconds.",
     "Keep comments short, conversational, and worth replying to. Use one short sentence or one short question only.",
     "Do not mention being an AI unless the context explicitly requires it.",
@@ -131,6 +132,8 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
         "Before speaking, make sure you can answer: what is the streamer doing right now? If that is unclear, return hold.",
       externalContentRule:
         "If latestScreenshotSummary.contentContext is external_content, ask about why the streamer is reading it, what takeaway matters, or how it relates to their project. Do not zoom into named tools or claims inside the content unless the streamer is clearly discussing them.",
+      humanFeedbackRecovery:
+        "If the latest real viewer comment complains that bot comments are confusing, off-topic, or too technical, do not continue the same topic. Either hold briefly or make one simpler, broader, more human comment grounded in what the streamer appears to be doing.",
       language: packet.language,
       recentHumanChat: recentHumanChat.slice(-10),
       recentBotChat: recentBotChat.slice(-6),

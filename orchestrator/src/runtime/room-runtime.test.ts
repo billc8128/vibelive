@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInjector } from "./chat-injector.js";
 import { AgentRunner } from "./agent-runner.js";
@@ -9,6 +9,10 @@ import type { Persona } from "./personas.js";
 import type { ScreenshotSummary } from "./screenshot-summarizer.js";
 
 describe("RoomRuntime", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("uses jittered tick delays based on audience intensity", () => {
     expect(pickTickDelayMs("low", 0)).toBe(45_000);
     expect(pickTickDelayMs("low", 1)).toBe(90_000);
@@ -115,6 +119,7 @@ describe("RoomRuntime", () => {
   });
 
   it("feeds mirrored chat messages and screenshots into the next model packet", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
     let seenPacket: ContextPacket | null = null;
     const screenshotSummary: ScreenshotSummary = {
       uiLanguage: "zh",
@@ -178,5 +183,40 @@ describe("RoomRuntime", () => {
       capturedAt: 123456,
     });
     expect(seenPacket!.latestScreenshotSummary).toEqual(screenshotSummary);
+  });
+
+  it("logs when every persona holds instead of publishing", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const runtime = new RoomRuntime(
+      {
+        roomSlug: "demo-room",
+        roomTitle: "Demo Room",
+        projectStage: "coding",
+        codingTool: "cursor",
+      },
+      {
+        agentRunner: new AgentRunner(new NullModelClient()),
+        chatInjector: new ChatInjector("demo-room", null),
+      },
+    );
+
+    await runtime.ingestContextEvent({
+      kind: "chat_message",
+      roomSlug: "demo-room",
+      user: "alice",
+      text: "你们说的都是什么东西",
+      bot: false,
+    });
+    await runtime.tick();
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "ai audience tick skipped",
+      expect.objectContaining({
+        roomSlug: "demo-room",
+        reason: "all_agents_held",
+        humanChatCount: 1,
+        botChatCount: 0,
+      }),
+    );
   });
 });

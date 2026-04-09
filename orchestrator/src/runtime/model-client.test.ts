@@ -121,6 +121,9 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[0]?.content).toContain(
       "Avoid overfitting to exact on-screen terms",
     );
+    expect(body.messages[0]?.content).toContain(
+      "When the latest human chat is confused by or critical of recent bot messages",
+    );
   });
 
   it("uses screenshot summary instead of raw image input for chat generation", async () => {
@@ -203,6 +206,7 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[1]?.content).toContain('"commentStyleMix"');
     expect(body.messages[1]?.content).toContain('"overfitAvoidance"');
     expect(body.messages[1]?.content).toContain('"exampleGoodComments"');
+    expect(body.messages[1]?.content).toContain('"humanFeedbackRecovery"');
     expect(body.messages[1]?.content).toContain('"latestScreenshotSummary"');
   });
 

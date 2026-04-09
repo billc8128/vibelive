@@ -136,10 +136,19 @@ export class RoomRuntime {
     );
     this.personaCursor = (startIndex + 1) % PERSONAS.length;
 
+    let heldCount = 0;
+    let gateRejectedCount = 0;
     for (const persona of orderedPersonas) {
       const decision = await this.agentRunner.decide(persona, packet);
-      if (decision.type !== "speak") continue;
-      if (!this.gate.accept(persona.key, decision.text, this.now())) continue;
+      if (decision.type !== "speak") {
+        heldCount += 1;
+        continue;
+      }
+
+      if (!this.gate.accept(persona.key, decision.text, this.now())) {
+        gateRejectedCount += 1;
+        continue;
+      }
 
       await this.chatInjector.publish({
         user: persona.displayName,
@@ -153,6 +162,32 @@ export class RoomRuntime {
         bot: true,
       });
       break;
+    }
+
+    const humanChatCount = packet.chatWindow.filter((message) => !message.bot)
+      .length;
+    const botChatCount = packet.chatWindow.filter((message) => message.bot)
+      .length;
+    const hasContextToDebug =
+      humanChatCount > 0 ||
+      botChatCount > 0 ||
+      !!packet.latestScreenshot ||
+      !!packet.latestScreenshotSummary;
+
+    if (
+      heldCount + gateRejectedCount >= orderedPersonas.length &&
+      hasContextToDebug
+    ) {
+      console.info("ai audience tick skipped", {
+        roomSlug: this.roomSlug,
+        reason: gateRejectedCount > 0 ? "gate_rejected" : "all_agents_held",
+        humanChatCount,
+        botChatCount,
+        heldCount,
+        gateRejectedCount,
+        screenshotAttached: !!packet.latestScreenshot,
+        screenshotSummaryAttached: !!packet.latestScreenshotSummary,
+      });
     }
   }
 
