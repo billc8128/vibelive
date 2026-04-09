@@ -391,7 +391,12 @@ export class Live2DRenderer implements SourceRenderer {
         //    在 ParamAngleY 上 add sin 波 (面捕的 set 之后 add), 让模型有
         //    持续的轻微上下点头, 模拟自然呼吸. 振幅 / 频率从 studioConfig
         //    读, 用户 UI 可调.
-        if (studioConfig.breathEnabled) {
+        //
+        // ⚠ 必须 gate 在 latestInputs 存在的条件下: breath 是 face tracking
+        // 的 "配合" 不是 "替代". 没启用面捕 (latestInputs 是 null) 时
+        // breath 单独写 sin 波 → 模型自己缓慢点头 → 用户感觉"模型自己摆动
+        // 不跟我". Fail-loud: 没面捕就让模型完全静态, 让用户立刻知道.
+        if (studioConfig.breathEnabled && this.latestInputs) {
           const cm = internal.coreModel;
           const t = performance.now() / 1000;
           const breath =
