@@ -94,11 +94,14 @@ interface CubismRendererLike {
 interface InternalModelLike {
   coreModel: {
     setParameterValueById(id: string, value: number, weight?: number): void;
+    getParameterValueById?(id: string): number;
+    getParameterIndex?(id: string): number;
     /** 用来 enumerate 模型真实参数名, 排查 vtube.json 里的 ParamX 在不在.
      * Cubism4 没有 getParameterId(index) 方法, ID 存私有 _parameterIds 数组,
      * 直接 cast 拿. */
     getParameterCount?(): number;
     _parameterIds?: string[];
+    _parameterValues?: Float32Array;
   };
   /** Cubism4InternalModel 上是 public 的, 直接 .renderer (cubism4.js#10797) */
   renderer?: CubismRendererLike;
@@ -135,6 +138,8 @@ export class Live2DRenderer implements SourceRenderer {
   // 一次性 debug 标记 — 帮诊断面捕链路在哪一步断的, 各只 log 一次
   private didLogFirstInputs = false;
   private didLogFirstApply = false;
+  // 周期 read-back probe: vtube apply 之后立即 read 回 ParamAngleX 看是不是真写进了
+  private probeFrameCounter = 0;
 
   constructor(opts: {
     modelUrl: string;
@@ -333,6 +338,22 @@ export class Live2DRenderer implements SourceRenderer {
             );
           }
           this.applier.apply(internal.coreModel, this.latestInputs);
+
+          // Read-back probe — 每秒一次, 看 vtube applier 写完之后
+          // ParamAngleX 在 _parameterValues 数组里的真实值
+          this.probeFrameCounter++;
+          if (this.probeFrameCounter % 60 === 0) {
+            const cm = internal.coreModel;
+            const idx = cm.getParameterIndex?.("ParamAngleX") ?? -1;
+            const real = idx >= 0 && cm._parameterValues
+              ? cm._parameterValues[idx]
+              : NaN;
+            const viaApi = cm.getParameterValueById?.("ParamAngleX") ?? NaN;
+            const inputFx = this.latestInputs.FaceAngleX;
+            console.log(
+              `[live2d PROBE] FaceAngleX_input=${inputFx?.toFixed(2) ?? "N/A"} ParamAngleX idx=${idx} _parameterValues=${(real as number).toFixed(2)} getValueById=${(viaApi as number).toFixed(2)}`
+            );
+          }
         }
         // 2) expression 后写 → 表情参数覆盖追踪 (与 VTS 一致)
         this.expressions?.apply(internal.coreModel, dtMs);
