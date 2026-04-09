@@ -34,11 +34,10 @@ npm run dev
 
 Both routes require the `x-orchestrator-secret` header.
 
-Usage/cost events are persisted to Supabase when `SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY` are configured and the
-`app/supabase/008_ai_audience_usage.sql` migration has been applied. If the
-table is missing or Supabase is unavailable, the orchestrator falls back to
-in-memory usage data for the current process.
+Usage/cost events are persisted to Postgres when `DATABASE_URL` is configured.
+The orchestrator creates the `ai_audience_usage_events` table on startup/use. If
+Postgres is unavailable, it falls back to in-memory usage data for the current
+process.
 
 ## Railway
 
@@ -49,8 +48,7 @@ Set these variables in Railway:
 - `NEXT_PUBLIC_LIVEKIT_URL`
 - `LIVEKIT_API_KEY`
 - `LIVEKIT_API_SECRET`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `DATABASE_URL`
 - `AI_AUDIENCE_MODEL_PROVIDER`
 - `AI_AUDIENCE_MODEL_NAME`
 - `AI_AUDIENCE_MODEL_API_KEY`

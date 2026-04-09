@@ -11,10 +11,7 @@ export interface OrchestratorConfig {
   port: number;
   orchestratorSecret: string;
   model: OpenRouterModelConfig | null;
-  supabase: {
-    url: string;
-    serviceRoleKey: string;
-  } | null;
+  databaseUrl: string | null;
 }
 
 function readModelConfig(): OpenRouterModelConfig | null {
@@ -35,21 +32,10 @@ function readModelConfig(): OpenRouterModelConfig | null {
 }
 
 export function readConfig(): OrchestratorConfig {
-  const supabaseUrl =
-    process.env.SUPABASE_URL?.trim() ??
-    process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-
   return {
     port: Number(process.env.PORT || 3100),
     orchestratorSecret: process.env.ORCHESTRATOR_SECRET ?? "",
     model: readModelConfig(),
-    supabase:
-      supabaseUrl && supabaseServiceRoleKey
-        ? {
-            url: supabaseUrl,
-            serviceRoleKey: supabaseServiceRoleKey,
-          }
-        : null,
+    databaseUrl: process.env.DATABASE_URL?.trim() || null,
   };
 }
