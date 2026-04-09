@@ -161,15 +161,18 @@ export class ExpressionApplier {
 
   /**
    * 按 baseUrls 顺序尝试 fetch. 第一个返回 200 的就用. 全 404 返回 null.
-   * 这种"多前缀"策略是因为 .vtube.json 的 Hotkey.File 字段不带子目录,
-   * 但实际文件可能在 animetions/ 子目录里 (saba1B 就是这样).
+   * 这种"多前缀"策略是因为 .vtube.json 的 Hotkey.File 字段不一定带
+   * 子目录, 而不同模型的 expression 文件可能放 animetions / expressions /
+   * exp / 根目录 等不同布局.
    */
   private async fetchExpression(
     baseUrls: string[],
     name: string
   ): Promise<ExpressionData | null> {
+    const tried: string[] = [];
     for (const base of baseUrls) {
       const url = base.endsWith("/") ? `${base}${name}` : `${base}/${name}`;
+      tried.push(url);
       try {
         const res = await fetch(url);
         if (res.ok) return (await res.json()) as ExpressionData;
@@ -177,7 +180,12 @@ export class ExpressionApplier {
         // 网络错误 — 继续试下一个 base
       }
     }
-    console.warn(`[expression] ${name} 在所有 baseUrl 都未找到`);
+    // 失败时打全部尝试列表, 让用户知道实际去哪里找了, 方便手动确认
+    // 文件实际在哪里 / 调整 vtube.json 的 Folder 字段
+    console.warn(
+      `[expression] ${name} 在所有 baseUrl 都未找到, 尝试过:\n  ` +
+        tried.join("\n  ")
+    );
     return null;
   }
 }

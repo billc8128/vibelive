@@ -260,7 +260,13 @@ export default function StudioPage() {
                 {faceTracking ? "● 面捕已启用" : "○ 启用面捕"}
               </button>
             </div>
-            <div className="pixel-border-glow bg-bg-card p-2 relative">
+            <div className="pixel-border-glow bg-bg-card p-2">
+              {/* Inner wrapper — SourceCanvasOverlay 用 absolute inset-0,
+                  必须有一个 relative anchor 跟 canvas 同尺寸. 之前直接用
+                  外层 wrapper 当 anchor, 但外层有 p-2 padding, 让 overlay
+                  比 canvas 大 8px, 导致 source div 跟 PIXI 渲染偏了 8px,
+                  点击模型像素无法选中 source. */}
+              <div className="relative">
               <SceneCanvas
                 scene={scene}
                 canvasRef={canvasRef}
@@ -295,6 +301,7 @@ export default function StudioPage() {
                 dispatch={dispatch}
                 canvasRef={canvasRef}
               />
+              </div>
             </div>
             {faceTrackErr ? (
               <p className="text-[10px] text-accent-red/80 px-1 leading-relaxed">

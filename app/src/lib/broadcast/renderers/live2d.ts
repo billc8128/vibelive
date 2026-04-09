@@ -153,11 +153,19 @@ export class Live2DRenderer implements SourceRenderer {
     this.vtubeConfigUrl = opts.vtubeConfigUrl;
     this.onHotkeysReady = opts.onHotkeysReady;
 
-    // 表情文件查找的 baseUrl: 跟 .vtube.json 同目录, 以及 animetions/ 子目录
+    // 表情文件查找的 baseUrl 候选 — 不同 VTuber 模型的 expression 文件
+    // 放在不同子目录, 没有标准. 试常见命名 + dir 自身, 第一个 200 的胜出.
+    // (saba1B 的 vtube.json 没标 Folder 字段, 但实际文件在 animetions/,
+    // 所以默认 baseUrls 就要包含这个)
     if (opts.vtubeConfigUrl) {
       const lastSlash = opts.vtubeConfigUrl.lastIndexOf("/");
       const dir = lastSlash >= 0 ? opts.vtubeConfigUrl.slice(0, lastSlash) : "";
-      this.expressionBaseUrls = [`${dir}/animetions`, dir];
+      this.expressionBaseUrls = [
+        `${dir}/animetions`, // saba1B 实际位置
+        `${dir}/expressions`, // 常见命名
+        `${dir}/exp`, // 常见命名
+        dir, // 跟 vtube.json 同目录
+      ];
     }
   }
 
@@ -486,8 +494,19 @@ export class Live2DRenderer implements SourceRenderer {
     const next = source.activeExpression ?? null;
     if (next === this.currentExpressionName) return;
     this.currentExpressionName = next;
+
+    // 拼 file path: 如果 hotkey 有 folder 字段, 用 ${folder}/${file},
+    // 否则就是裸 file. expression-applier 会用 baseUrls 数组 fallback.
+    let filePath = next;
+    if (next && source.hotkeys) {
+      const hotkey = source.hotkeys.find((h) => h.file === next);
+      if (hotkey?.folder) {
+        filePath = `${hotkey.folder}/${next}`;
+      }
+    }
+
     // setActive 是 fire-and-forget — 内部 fetch + cache + fade
-    this.expressions.setActive(this.expressionBaseUrls, next).catch((e) => {
+    this.expressions.setActive(this.expressionBaseUrls, filePath).catch((e) => {
       console.warn("[live2d] expression load failed:", e);
     });
   }
