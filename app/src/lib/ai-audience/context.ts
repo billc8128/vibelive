@@ -17,6 +17,12 @@ export type AiAudienceContextEvent =
       kind: "screenshot";
       url: string;
       capturedAt: number;
+    }
+  | {
+      roomSlug: string;
+      kind: "video_clip";
+      url: string;
+      capturedAt: number;
     };
 
 function isNonEmptyString(value: unknown): value is string {
@@ -43,6 +49,10 @@ export function isAiAudienceContextEvent(
         isNonEmptyString(value.user) && isNonEmptyString(value.reactionKind)
       );
     case "screenshot":
+      return (
+        isNonEmptyString(value.url) && typeof value.capturedAt === "number"
+      );
+    case "video_clip":
       return (
         isNonEmptyString(value.url) && typeof value.capturedAt === "number"
       );

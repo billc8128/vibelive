@@ -221,6 +221,12 @@ export class RoomRuntime {
           }
         }
         return;
+      case "video_clip":
+        this.mediaSnapshotter.setLatestVideoClip({
+          url: event.url,
+          capturedAt: event.capturedAt,
+        });
+        return;
     }
   }
 

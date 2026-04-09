@@ -74,4 +74,39 @@ describe("runtime routes", () => {
       }),
     );
   });
+
+  it("ingests mirrored video clip context events for an active room", async () => {
+    process.env.ORCHESTRATOR_SECRET = "expected-secret";
+
+    const ingested: unknown[] = [];
+    const roomManager = new RoomManager();
+    roomManager.register("demo-room", {
+      stop() {},
+      ingestContextEvent(event) {
+        ingested.push(event);
+      },
+    });
+
+    const server = buildServer(undefined, roomManager);
+    const res = await server.inject({
+      method: "POST",
+      url: "/runtime/context",
+      headers: { "x-orchestrator-secret": "expected-secret" },
+      payload: {
+        kind: "video_clip",
+        roomSlug: "demo-room",
+        url: "data:video/webm;base64,clip",
+        capturedAt: 1_744_163_200_000,
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(ingested).toContainEqual(
+      expect.objectContaining({
+        kind: "video_clip",
+        roomSlug: "demo-room",
+        url: "data:video/webm;base64,clip",
+      }),
+    );
+  });
 });

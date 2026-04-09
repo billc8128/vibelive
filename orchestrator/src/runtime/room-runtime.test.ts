@@ -185,6 +185,46 @@ describe("RoomRuntime", () => {
     expect(seenPacket!.latestScreenshotSummary).toEqual(screenshotSummary);
   });
 
+  it("feeds mirrored video clips into the next model packet", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    let seenPacket: ContextPacket | null = null;
+
+    class CapturePacketModelClient implements ModelClient {
+      async decide(_persona: Persona, packet: ContextPacket) {
+        seenPacket = packet;
+        return { type: "hold" } as const;
+      }
+    }
+
+    const runtime = new RoomRuntime(
+      {
+        roomSlug: "demo-room",
+        roomTitle: "Demo Room",
+        projectStage: "coding",
+        codingTool: "cursor",
+      },
+      {
+        agentRunner: new AgentRunner(new CapturePacketModelClient()),
+        chatInjector: new ChatInjector("demo-room", null),
+      },
+    );
+
+    await runtime.ingestContextEvent({
+      kind: "video_clip",
+      roomSlug: "demo-room",
+      url: "data:video/webm;base64,clip",
+      capturedAt: 1_744_163_200_000,
+    });
+
+    await runtime.tick();
+
+    expect(seenPacket).not.toBeNull();
+    expect(seenPacket!.latestVideoClip).toEqual({
+      url: "data:video/webm;base64,clip",
+      capturedAt: 1_744_163_200_000,
+    });
+  });
+
   it("logs when every persona holds instead of publishing", async () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const runtime = new RoomRuntime(

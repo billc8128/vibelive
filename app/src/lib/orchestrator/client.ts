@@ -32,6 +32,12 @@ export type AiAudienceContextEventPayload =
       kind: "screenshot";
       url: string;
       capturedAt: number;
+    }
+  | {
+      roomSlug: string;
+      kind: "video_clip";
+      url: string;
+      capturedAt: number;
     };
 
 export function buildSignedOrchestratorHeaders(secret: string) {

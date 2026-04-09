@@ -46,10 +46,18 @@ export interface ScreenshotContextEvent {
   capturedAt: number;
 }
 
+export interface VideoClipContextEvent {
+  kind: "video_clip";
+  roomSlug: string;
+  url: string;
+  capturedAt: number;
+}
+
 export type RuntimeContextEvent =
   | ChatContextEvent
   | ReactionContextEvent
-  | ScreenshotContextEvent;
+  | ScreenshotContextEvent
+  | VideoClipContextEvent;
 
 export interface BotChatMessage {
   user: string;

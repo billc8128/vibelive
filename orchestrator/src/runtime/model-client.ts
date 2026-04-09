@@ -146,7 +146,12 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
           }
         : null,
       latestScreenshotSummary: packet.latestScreenshotSummary,
-      latestVideoClip: packet.latestVideoClip,
+      latestVideoClip: packet.latestVideoClip
+        ? {
+            capturedAt: packet.latestVideoClip.capturedAt,
+            attached: true,
+          }
+        : null,
     },
     null,
     2,
@@ -155,22 +160,40 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
 
 function buildUserMessageContent(persona: Persona, packet: ContextPacket) {
   const prompt = buildUserPrompt(persona, packet);
-  if (packet.latestScreenshotSummary || !packet.latestScreenshot?.url) {
+  if (packet.latestScreenshotSummary && !packet.latestVideoClip?.url) {
     return prompt;
   }
 
-  return [
+  const content: Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } }
+    | { type: "video_url"; video_url: { url: string } }
+  > = [
     {
       type: "text",
       text: prompt,
     },
-    {
+  ];
+
+  if (!packet.latestScreenshotSummary && packet.latestScreenshot?.url) {
+    content.push({
       type: "image_url",
       image_url: {
         url: packet.latestScreenshot.url,
       },
-    },
-  ];
+    });
+  }
+
+  if (packet.latestVideoClip?.url) {
+    content.push({
+      type: "video_url",
+      video_url: {
+        url: packet.latestVideoClip.url,
+      },
+    });
+  }
+
+  return content.length > 1 ? content : prompt;
 }
 
 function extractMessageContent(payload: unknown): string {

@@ -52,4 +52,31 @@ describe("sendAiAudienceContextEvent", () => {
       }),
     );
   });
+
+  it("posts mirrored video clip events to the orchestrator context endpoint", async () => {
+    vi.stubEnv("AI_AUDIENCE_ORCHESTRATOR_URL", "https://orchestrator.example");
+    vi.stubEnv("AI_AUDIENCE_ORCHESTRATOR_SECRET", "shared-secret");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 202 }));
+
+    await sendAiAudienceContextEvent({
+      roomSlug: "demo-room",
+      kind: "video_clip",
+      url: "data:video/webm;base64,clip",
+      capturedAt: 1_744_163_200_000,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://orchestrator.example/runtime/context",
+      expect.objectContaining({
+        body: JSON.stringify({
+          roomSlug: "demo-room",
+          kind: "video_clip",
+          url: "data:video/webm;base64,clip",
+          capturedAt: 1_744_163_200_000,
+        }),
+      }),
+    );
+  });
 });

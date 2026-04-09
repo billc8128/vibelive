@@ -210,6 +210,94 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[1]?.content).toContain('"latestScreenshotSummary"');
   });
 
+  it("attaches a video clip as model input when video context is available", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '{"decision":"hold"}',
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    const client = new OpenRouterModelClient(
+      {
+        name: "google/gemini-3-flash-preview",
+        apiKey: "test-key",
+      },
+      fetchMock as typeof fetch,
+    );
+
+    const packet = buildContextPacket({
+      room: {
+        slug: "demo-room",
+        title: "Build an AI code stream",
+        stage: "coding",
+        codingTool: "cursor",
+      },
+      chatWindow: [],
+      latestScreenshotSummary: {
+        uiLanguage: "zh",
+        primarySurface: "terminal",
+        dominantSource: "agent_output",
+        contentContext: "streamer_workspace",
+        activityConfidence: "high",
+        streamerActivity: "主播在调试 AI audience 的语言问题",
+        humanPromptSummary: "主播在要求 agent 调整 prompt",
+        agentOutputSummary: "agent 在解释 runtime 改动",
+        currentTaskSummary: "主播在调试 AI audience 的语言问题",
+        suggestedAngles: ["为什么先动 prompt 不动 gate"],
+      },
+      latestVideoClip: {
+        url: "data:video/webm;base64,clip",
+        capturedAt: 1_744_163_200_000,
+      },
+    });
+
+    await client.decide(PERSONAS[0], packet);
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit | undefined,
+    ];
+    const body = JSON.parse(String(requestInit?.body)) as {
+      model: string;
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const content = body.messages[1]?.content as Array<Record<string, unknown>>;
+    const textPart = content.find((part) => part.type === "text") as
+      | { type: "text"; text: string }
+      | undefined;
+    const promptPayload = JSON.parse(textPart?.text ?? "{}") as {
+      latestVideoClip?: unknown;
+    };
+
+    expect(body.model).toBe("google/gemini-3-flash-preview");
+    expect(content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "text" }),
+        expect.objectContaining({
+          type: "video_url",
+          video_url: { url: "data:video/webm;base64,clip" },
+        }),
+      ]),
+    );
+    expect(promptPayload.latestVideoClip).toEqual({
+      capturedAt: 1_744_163_200_000,
+      attached: true,
+    });
+    expect(textPart?.text).not.toContain("data:video/webm;base64,clip");
+  });
+
   it("parses the first JSON object even when the model adds extra prose", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
