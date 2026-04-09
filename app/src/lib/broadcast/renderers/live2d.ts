@@ -193,12 +193,21 @@ export class Live2DRenderer implements SourceRenderer {
     // 5. 加载模型 — pixi-live2d-display 自动 fetch model3.json + 所有依赖
     //
     // 关键 options:
-    //   - autoFocus: false  → 不让模型 focus 跟随鼠标 (默认 true 会跟鼠标转头,
-    //                          跟我们的面捕冲突, 也不是用户期望的行为)
-    //   - autoHitTest: false → 不监听点击 hit-test (没用到, 关掉省点事件)
+    //   - autoUpdate: true  → ⚠ 必须显式传! Automator 构造器对 options
+    //                          做 destructuring + 直接赋值给 setter, 不传
+    //                          就是 undefined, setter 用 truthy check 判定
+    //                          undefined → false → 把 model 从 PIXI Ticker
+    //                          移除, 整个 model.update(dt) 链路停摆,
+    //                          beforeModelUpdate 永远不 emit → 面捕完全失效.
+    //                          (官方"默认 true"只在整个 options 都不传时
+    //                          生效, 一旦部分传了就坑.)
+    //   - autoFocus: false  → 不让模型 focus 跟随鼠标 (默认 true 会跟鼠标
+    //                          转头, 跟我们的面捕冲突)
+    //   - autoHitTest: false → 不监听点击 hit-test (没用到, 关掉省事件)
     let model: Live2DModelType;
     try {
       model = await Live2DModel.from(this.modelUrl, {
+        autoUpdate: true,
         autoFocus: false,
         autoHitTest: false,
       });
