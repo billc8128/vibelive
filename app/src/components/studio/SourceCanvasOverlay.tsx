@@ -245,6 +245,16 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
     scaleRef.current = scale;
   }, [scale]);
 
+  // Overlay root ref — global pointerdown handler 用 contains 判断
+  // 点击是否落在 overlay 内, 实现"点击外部 deselect"
+  const overlayRootRef = useRef<HTMLDivElement>(null);
+
+  // selectedId 也用 ref 拿最新值, 避免 effect dep 包含 selectedId 反复 install
+  const selectedIdRef = useRef(scene.selectedId);
+  useEffect(() => {
+    selectedIdRef.current = scene.selectedId;
+  });
+
   // 吸附 guides (state, 拖动时显示)
   const [guides, setGuides] = useState<Guide[]>([]);
 
@@ -400,6 +410,25 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
     }
   };
 
+  // ── Window-level pointerdown — 点击 overlay 外的任何地方 deselect.
+  // 让 inspector / source list / 其他 page 元素的 click 既能触发自己的
+  // handler, 也能 deselect canvas 上的 source. 用 overlayRootRef.contains
+  // 区分"在 overlay 内 (overlay 自己处理)"和"在 overlay 外 (要 deselect)".
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      if (!selectedIdRef.current) return; // 没选中, 不需要 deselect
+      const tgt = e.target as Node | null;
+      if (!tgt) return;
+      // 在 overlay 内 → 让 overlay 自己处理 (source pointerdown / handle / background)
+      if (overlayRootRef.current?.contains(tgt)) return;
+      dispatch({ type: "select", id: null });
+      setMenu(null);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [dispatch]);
+
   // ── Right click → context menu ──
   const handleContextMenu = (
     e: ReactMouseEvent<HTMLDivElement>,
@@ -550,6 +579,7 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
 
   return (
     <div
+      ref={overlayRootRef}
       className="absolute inset-0"
       style={{ pointerEvents: "auto" }}
       onPointerDown={handleBackgroundDown}
