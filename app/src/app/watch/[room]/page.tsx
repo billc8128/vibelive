@@ -18,7 +18,7 @@ import { EmojiPicker } from "@/components/EmojiPicker";
 import { StickerPicker } from "@/components/StickerPicker";
 import { ProgressBar } from "@/components/ProgressBar";
 import { ToolBadge } from "@/components/ToolBadge";
-import type { CodingTool, ProjectStage } from "@/lib/types";
+import { TOOL_LABELS, type CodingTool, type ProjectStage } from "@/lib/types";
 import { isValidStickerId } from "@/lib/stickers";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -36,8 +36,6 @@ import type { TranslationKey } from "@/lib/i18n/zh";
 import { isViewerParticipant } from "@/lib/participants";
 import { resolveViewerIdentity } from "@/lib/livekit/viewerIdentity";
 import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
-
-type LayoutMode = "theater" | "default" | "fullscreen";
 
 // 频道数据 (从 /api/channels/[slug] 加载)
 interface ChannelData {
@@ -77,16 +75,9 @@ interface ChannelData {
 const CHAT_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ── Coding tool guard ─────────────────────────
-const CODING_TOOLS: CodingTool[] = [
-  "cursor",
-  "copilot",
-  "windsurf",
-  "claude-code",
-  "v0",
-  "bolt",
-  "replit",
-  "other",
-];
+// Derived from TOOL_LABELS so adding a new tool to lib/types.ts automatically
+// extends the runtime allow-list — no drift.
+const CODING_TOOLS = Object.keys(TOOL_LABELS) as CodingTool[];
 function asCodingTool(value: string | null | undefined): CodingTool {
   if (value && (CODING_TOOLS as string[]).includes(value)) {
     return value as CodingTool;
@@ -120,12 +111,8 @@ function useElapsedMinutes(startedAt: string | null): number {
 // ── Player Controls ──────────────────────────
 function PlayerControls({
   videoRef,
-  layoutMode,
-  onLayoutChange,
 }: {
   videoRef: { current: HTMLVideoElement | null };
-  layoutMode: LayoutMode;
-  onLayoutChange: (mode: LayoutMode) => void;
 }) {
   const { t } = useI18n();
   const [paused, setPaused] = useState(false);
@@ -213,14 +200,6 @@ function PlayerControls({
     }
   };
 
-  const toggleTheater = () => {
-    if (isFullscreen) {
-      document.exitFullscreen();
-      return;
-    }
-    onLayoutChange(layoutMode === "theater" ? "default" : "theater");
-  };
-
   return (
     <div
       ref={containerRef}
@@ -286,15 +265,6 @@ function PlayerControls({
           )}
         </div>
 
-        {/* Theater mode (desktop only) */}
-        <button onClick={toggleTheater} className="hidden lg:block text-white hover:text-accent-cyan transition-colors" title={layoutMode === "theater" ? t('watch.layoutDefault') : t('watch.layoutTheater')}>
-          {layoutMode === "theater" ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 7H5c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm0 8H5V9h14v6z"/></svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM5 15h14v3H5z"/></svg>
-          )}
-        </button>
-
         {/* Fullscreen */}
         <button onClick={toggleFullscreen} className="text-white hover:text-accent-cyan transition-colors" title={isFullscreen ? t('btn.exitFullscreen') : t('btn.fullscreen')}>
           {isFullscreen ? (
@@ -310,13 +280,9 @@ function PlayerControls({
 
 // ── Video Area ───────────────────────────────
 function VideoArea({
-  layoutMode,
-  onLayoutChange,
   devTimeLabel,
   stages,
 }: {
-  layoutMode: LayoutMode;
-  onLayoutChange: (mode: LayoutMode) => void;
   devTimeLabel: string;
   stages: ProjectStage[];
 }) {
@@ -439,11 +405,7 @@ function VideoArea({
       )}
 
       {/* Player controls (hover) */}
-      <PlayerControls
-        videoRef={videoRef}
-        layoutMode={layoutMode}
-        onLayoutChange={onLayoutChange}
-      />
+      <PlayerControls videoRef={videoRef} />
     </div>
   );
 }
@@ -766,15 +728,19 @@ function ConnectedRoom({
   const devTimeLabel = formatDevMinutes(elapsedMin);
 
   // Editable channel state — initialized from channelData, may diverge during edit.
-  // savingRef guards against the 15s parent poll stomping in-flight typed values.
+  // lastEditAtRef + EDIT_COOLDOWN_MS guards against the 15s parent poll stomping
+  // freshly-typed values. The cooldown must exceed the poll interval (15s) plus
+  // any in-flight request latency, otherwise a poll that started *before* our
+  // PATCH landed can return with stale data and clobber the local edit.
+  const EDIT_COOLDOWN_MS = 20_000;
   const [projectName, setProjectName] = useState(channelData.channel.project_name || "");
   const [projectDesc, setProjectDesc] = useState(channelData.channel.project_desc || "");
   const [projectStage, setProjectStage] = useState(
     channelData.channel.project_stage || "构思中",
   );
-  const savingRef = useRef(false);
+  const lastEditAtRef = useRef(0);
   useEffect(() => {
-    if (savingRef.current) return;
+    if (Date.now() - lastEditAtRef.current < EDIT_COOLDOWN_MS) return;
     setProjectName(channelData.channel.project_name || "");
     setProjectDesc(channelData.channel.project_desc || "");
     setProjectStage(channelData.channel.project_stage || "构思中");
@@ -791,6 +757,8 @@ function ConnectedRoom({
   const [isStreamer, setIsStreamer] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
   const [isFavorited, setIsFavorited] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [ending, setEnding] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
@@ -827,8 +795,10 @@ function ConnectedRoom({
   const saveField = useCallback(
     (fields: Record<string, string>) => {
       if (!isStreamer) return;
+      // Bump the cooldown on every keystroke so the sync effect skips for
+      // EDIT_COOLDOWN_MS after the *latest* edit, not after the latest PATCH.
+      lastEditAtRef.current = Date.now();
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      savingRef.current = true;
       saveTimerRef.current = setTimeout(async () => {
         setSaving(true);
         try {
@@ -839,7 +809,6 @@ function ConnectedRoom({
           });
         } catch {}
         setSaving(false);
-        savingRef.current = false;
       }, 600);
     },
     [decodedRoom, isStreamer],
@@ -859,27 +828,39 @@ function ConnectedRoom({
   };
 
   const toggleFollow = async () => {
-    const method = isFollowing ? "DELETE" : "POST";
-    const res = await fetch("/api/follows", {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ following_id: channelData.channel.user_id }),
-    });
-    if (res.ok) setIsFollowing(!isFollowing);
+    if (followLoading) return;
+    setFollowLoading(true);
+    try {
+      const method = isFollowing ? "DELETE" : "POST";
+      const res = await fetch("/api/follows", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ following_id: channelData.channel.user_id }),
+      });
+      if (res.ok) setIsFollowing(!isFollowing);
+    } finally {
+      setFollowLoading(false);
+    }
   };
 
   const toggleFavorite = async () => {
-    const method = isFavorited ? "DELETE" : "POST";
-    const res = await fetch("/api/favorites", {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        room_name: decodedRoom,
-        stream_title: projectName || channelData.profile?.display_name || "",
-        streamer_name: channelData.profile?.display_name || "",
-      }),
-    });
-    if (res.ok) setIsFavorited(!isFavorited);
+    if (favoriteLoading) return;
+    setFavoriteLoading(true);
+    try {
+      const method = isFavorited ? "DELETE" : "POST";
+      const res = await fetch("/api/favorites", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room_name: decodedRoom,
+          stream_title: projectName || channelData.profile?.display_name || "",
+          streamer_name: channelData.profile?.display_name || "",
+        }),
+      });
+      if (res.ok) setIsFavorited(!isFavorited);
+    } finally {
+      setFavoriteLoading(false);
+    }
   };
 
   const endStream = async () => {
@@ -974,7 +955,8 @@ function ConnectedRoom({
             ) : (
               <button
                 onClick={toggleFavorite}
-                className={`pixel-btn text-[8px] ${
+                disabled={favoriteLoading}
+                className={`pixel-btn text-[8px] disabled:opacity-50 ${
                   isFavorited
                     ? "border-accent-yellow text-bg-primary bg-accent-yellow"
                     : "border-accent-yellow text-accent-yellow"
@@ -992,12 +974,7 @@ function ConnectedRoom({
           <div className="flex-1 min-w-0 space-y-4">
             {/* Video */}
             <div className="relative pixel-border-live aspect-video bg-bg-primary overflow-hidden">
-              <VideoArea
-                layoutMode="default"
-                onLayoutChange={() => {}}
-                devTimeLabel={devTimeLabel}
-                stages={stages}
-              />
+              <VideoArea devTimeLabel={devTimeLabel} stages={stages} />
             </div>
 
             {/* Project Info + Streamer Card */}
@@ -1105,7 +1082,8 @@ function ConnectedRoom({
                   {!isStreamer && (
                     <button
                       onClick={toggleFollow}
-                      className={`pixel-btn text-[8px] ${
+                      disabled={followLoading}
+                      className={`pixel-btn text-[8px] disabled:opacity-50 ${
                         isFollowing
                           ? "border-text-secondary text-text-secondary bg-bg-surface"
                           : "border-accent-pink text-accent-pink hover:bg-accent-pink hover:text-white"
@@ -1154,10 +1132,13 @@ function ConnectedRoom({
           </div>
 
           {/* Chat sidebar — sticky desktop only, matches mock.
-              top-14 clears the global Navbar (h-12 = 48px sticky top-0). */}
+              Sticky positioning is relative to the inner overflow-y-auto scroll
+              container (the parent of ConnectedRoom), which already starts below
+              the global h-12 Navbar — so top-0 is correct, no Navbar offset needed.
+              max-h caps the panel at viewport-minus-Navbar so it never overflows. */}
           {chatOpen && (
             <div className="w-[340px] shrink-0 hidden lg:block">
-              <div className="sticky top-14 h-[calc(100vh-72px)]">
+              <div className="sticky top-0 h-[calc(100vh-3rem)]">
                 <LiveChatPanel
                   viewerName={identity}
                   roomName={roomName}
