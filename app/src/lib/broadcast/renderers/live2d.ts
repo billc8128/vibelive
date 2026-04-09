@@ -307,6 +307,17 @@ export class Live2DRenderer implements SourceRenderer {
       }
 
       const internal = (model as unknown as Live2DModelLike).internalModel;
+      // Probe 模式: URL 加 ?probe=1 启用. Handler 在 face apply 之后强制
+      // 覆盖几个常用 angle 参数为 sin 波, 用来验证 setParameterValueById
+      // 真的能驱动 mesh. 如果模型摇头 → 写入生效, 问题在 face tracker
+      // 数据流; 如果不摇 → 这些参数是 dummy, 模型实际驱动的是其他参数名.
+      const probeMode =
+        typeof window !== "undefined" &&
+        window.location.search.includes("probe=1");
+      if (probeMode) {
+        console.log("[live2d] ⚙ PROBE 模式启用: 强制 sin 波写入 ParamAngleX/Y/Z");
+      }
+
       const handler = () => {
         const now = performance.now();
         const dtMs = this.lastFrameTime === 0 ? 16 : now - this.lastFrameTime;
@@ -325,6 +336,25 @@ export class Live2DRenderer implements SourceRenderer {
         }
         // 2) expression 后写 → 表情参数覆盖追踪 (与 VTS 一致)
         this.expressions?.apply(internal.coreModel, dtMs);
+
+        // 3) Probe — 覆盖一切. 用 sin/cos 写多个候选参数名, 看哪个驱动 mesh.
+        if (probeMode) {
+          const t = now / 500; // ~每 3 秒一个完整周期
+          const yaw = Math.sin(t) * 25;
+          const pitch = Math.cos(t * 0.7) * 15;
+          const roll = Math.sin(t * 0.5) * 15;
+          // 标准命名
+          internal.coreModel.setParameterValueById("ParamAngleX", yaw);
+          internal.coreModel.setParameterValueById("ParamAngleY", pitch);
+          internal.coreModel.setParameterValueById("ParamAngleZ", roll);
+          // saba1B 备选: 多层 angle 参数 (Master/Sub)
+          internal.coreModel.setParameterValueById("ParamAngleMX", yaw);
+          internal.coreModel.setParameterValueById("ParamAngleMY", pitch);
+          internal.coreModel.setParameterValueById("ParamAngleMZ", roll);
+          internal.coreModel.setParameterValueById("ParamAngleSX", yaw);
+          internal.coreModel.setParameterValueById("ParamAngleSY", pitch);
+          internal.coreModel.setParameterValueById("ParamAngleSZ", roll);
+        }
       };
       internal.on("beforeModelUpdate", handler);
       this.beforeUpdateHandler = handler;
