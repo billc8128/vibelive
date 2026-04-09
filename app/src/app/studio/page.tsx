@@ -16,6 +16,7 @@ import { SourceList } from "@/components/studio/SourceList";
 import { SourceInspector } from "@/components/studio/SourceInspector";
 import { AddSourceMenu } from "@/components/studio/AddSourceMenu";
 import { MotionSettingsPanel } from "@/components/studio/MotionSettingsPanel";
+import { AudioMixerPanel } from "@/components/studio/AudioMixerPanel";
 
 // SceneCanvas import 链最终拉到 PIXI + pixi-live2d-display, 这两个库在
 // 模块顶层访问 window, Next.js prerender 阶段 (server) 会 ReferenceError.
@@ -100,8 +101,8 @@ export default function StudioPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 推流是否带麦克风 — 启动前可改, live 中改无效 (要重连)
-  const [withMic, setWithMic] = useState(false);
+  // 麦克风 / 系统声音由 audio-mixer singleton 管理 (见 AudioMixerPanel).
+  // 推流中可任意 mute / 切设备 / 调音量 / 改噪声抑制 — 都不会重连 LiveKit.
 
   // Compositor 输出 canvas 的 ref — 父组件持有, 推流时直接 captureStream
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -127,7 +128,9 @@ export default function StudioPage() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     try {
-      await publisher.start(canvas, { withMic });
+      // audio (mic / system) 由 audioMixer singleton 管理, publisher 不再
+      // 接收 withMic — start 后会调 audioMixer.attachToRoom(room) 自动 publish
+      await publisher.start(canvas);
     } catch {
       // start 内部已经 setSnap("error"), UI 自动显示错误
     }
@@ -153,7 +156,7 @@ export default function StudioPage() {
           </span>
           <div className="flex-1 h-px bg-gradient-to-r from-accent-purple/40 to-transparent" />
           <span className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary opacity-50">
-            phase 3e · 自定义 url + 麦克风开关
+            phase 3f · 音频混合器 + 推流中切换
           </span>
         </div>
 
@@ -189,20 +192,7 @@ export default function StudioPage() {
               </p>
             )}
           </div>
-          {/* Mic toggle — 仅推流前可改, live 中 disabled */}
-          <button
-            type="button"
-            onClick={() => setWithMic((v) => !v)}
-            disabled={isLive || isPublishBusy}
-            className={`pixel-border px-3 py-1.5 font-[family-name:var(--font-pixel)] text-[9px] uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              withMic
-                ? "bg-accent-cyan/20 text-accent-cyan"
-                : "bg-bg-card text-text-secondary hover:bg-accent-cyan/10"
-            }`}
-            title={isLive ? "推流中无法切换" : "推流时是否同时推送麦克风"}
-          >
-            {withMic ? "● 麦克风" : "○ 麦克风"}
-          </button>
+          {/* 麦克风 / 系统声音 → 见右侧 AudioMixerPanel */}
           {isLive ? (
             <button
               type="button"
@@ -315,13 +305,14 @@ export default function StudioPage() {
             )}
           </div>
 
-          {/* Right: Inspector + Motion settings */}
+          {/* Right: Inspector + Motion settings + Audio mixer */}
           <div className="space-y-3">
             <h2 className="font-[family-name:var(--font-pixel)] text-[9px] text-accent-yellow uppercase tracking-wider px-1">
               属性 · Inspector
             </h2>
             <SourceInspector scene={scene} dispatch={dispatch} />
             <MotionSettingsPanel />
+            <AudioMixerPanel />
           </div>
         </div>
 
