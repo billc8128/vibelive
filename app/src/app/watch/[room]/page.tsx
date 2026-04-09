@@ -14,6 +14,9 @@ import { Track, RoomEvent } from "livekit-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChatMessageRow } from "@/components/watch/chat/ChatMessageRow";
+import { EmojiPicker } from "@/components/EmojiPicker";
+import { StickerPicker } from "@/components/StickerPicker";
+import { isValidStickerId } from "@/lib/stickers";
 import { createClient } from "@/lib/supabase/client";
 import {
   encodeRoomDataMessage,
@@ -30,14 +33,6 @@ import type { TranslationKey } from "@/lib/i18n/zh";
 import { isViewerParticipant } from "@/lib/participants";
 import { resolveViewerIdentity } from "@/lib/livekit/viewerIdentity";
 import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
-import {
-  ReactionOverlay,
-  useReactionSystem,
-  REACTION_CONFIG,
-  type ReactionKind,
-  type OverlayBurst,
-  type ComboState,
-} from "@/components/ReactionOverlay";
 
 type LayoutMode = "theater" | "default" | "fullscreen";
 
@@ -273,17 +268,9 @@ function PlayerControls({
 function VideoArea({
   layoutMode,
   onLayoutChange,
-  bursts,
-  showBanner,
-  screenFlash,
-  screenShake,
 }: {
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
-  bursts: OverlayBurst[];
-  showBanner: { icon: string; count: number; color: string } | null;
-  screenFlash: boolean;
-  screenShake: boolean;
 }) {
   // OBS via Ingress 推上来的 track 源是 Camera, 不是 ScreenShare.
   // 同时订阅两类源, 优先选浏览器模式的 ScreenShare, fallback 到 OBS 的 Camera.
@@ -343,7 +330,7 @@ function VideoArea({
   }
 
   return (
-    <div className={`relative w-full h-full bg-bg-primary group ${screenFlash ? "screen-flash" : ""} ${screenShake ? "video-shake" : ""}`} ref={videoContainerRef}>
+    <div className="relative w-full h-full bg-bg-primary group" ref={videoContainerRef}>
       <VideoTrack trackRef={screenTrack} className="w-full h-full object-contain" />
       {/* Face cam PiP — 主播脸的小窗, 右下角, 屏幕共享时才显示 */}
       {faceCamTrack && (
@@ -357,7 +344,6 @@ function VideoArea({
           </span>
         </div>
       )}
-      <ReactionOverlay bursts={bursts} showBanner={showBanner} screenFlash={screenFlash} />
 
       {/* HUD */}
       <div className="absolute top-3 left-3 z-20 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -391,11 +377,9 @@ const STAGES_DATA = [
   { value: "已完成", labelKey: "goLive.stage.done" },
 ];
 
-function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, streamStartedAt }: {
+function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
   viewerName: string;
   roomName: string;
-  addReaction: (kind: ReactionKind) => void;
-  combo: ComboState;
   aiAudienceEnabled: boolean;
   streamStartedAt: string | null;
 }) {
@@ -422,53 +406,27 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Click-time scatter particles — anchored to viewport via fixed positioning,
-  // so they're visible even on mobile chat tab where the video overlay is hidden.
-  type ClickBurstParticle = {
-    id: string;
-    x: number; y: number;       // origin in viewport px
-    dx: number; dy: number;     // outward target offset
-    icon: string;
-    glow: string;
-  };
-  const [clickBursts, setClickBursts] = useState<ClickBurstParticle[]>([]);
-  const spawnClickBurst = useCallback((rect: DOMRect, kind: ReactionKind) => {
-    const cfg = REACTION_CONFIG[kind];
-    if (!cfg) return;
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const burstCount = 5;
-    const newBursts: ClickBurstParticle[] = Array.from({ length: burstCount }, (_, i) => {
-      // Upward cone: -90° ± 72°
-      const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.8 * Math.PI;
-      const distance = 38 + Math.random() * 38;
-      return {
-        id: `cb-${Date.now()}-${i}-${Math.random()}`,
-        x: cx + (Math.random() - 0.5) * 12,
-        y: cy,
-        dx: Math.cos(angle) * distance,
-        dy: Math.sin(angle) * distance,
-        icon: cfg.icon,
-        glow: cfg.glowVar,
-      };
+  // Chat input — emoji + sticker picker integration
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [stickerOpen, setStickerOpen] = useState(false);
+  const insertEmoji = useCallback((emoji: string) => {
+    const el = chatInputRef.current;
+    if (!el) {
+      setInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const newValue = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setInput(newValue);
+    // Restore caret position to just after the inserted emoji
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
     });
-    setClickBursts(prev => [...prev.slice(-40), ...newBursts]);
-    const ids = new Set(newBursts.map(b => b.id));
-    setTimeout(() => setClickBursts(prev => prev.filter(b => !ids.has(b.id))), 820);
   }, []);
-
-  // Long-press / hold-to-spam — IG/TikTok/YouTube Live pattern.
-  // Tap = single reaction. Hold = continuous fire at ~8/sec until release.
-  // First fire is immediate; auto-fire kicks in after a 240ms grace so a
-  // quick tap doesn't accidentally double-fire.
-  const holdRef = useRef<{ timeoutId?: ReturnType<typeof setTimeout>; intervalId?: ReturnType<typeof setInterval> }>({});
-  const endHold = useCallback(() => {
-    if (holdRef.current.timeoutId) clearTimeout(holdRef.current.timeoutId);
-    if (holdRef.current.intervalId) clearInterval(holdRef.current.intervalId);
-    holdRef.current = {};
-  }, []);
-  // Cleanup any in-flight hold on unmount so navigating away mid-spam stops the interval
-  useEffect(() => endHold, [endHold]);
 
   // Debounced save for streamer editing
   const saveField = useCallback(
@@ -529,7 +487,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
     return () => clearInterval(interval);
   }, [decodedRoom]);
 
-  // Data channel messages — skip messages from self (already added locally in sendChat/sendReaction)
+  // Data channel messages — skip messages from self (already added locally in sendChat/sendSticker)
   useEffect(() => {
     const handleData = (payload: Uint8Array, participant?: { identity: string }) => {
       if (participant?.identity === room.localParticipant.identity) return;
@@ -547,15 +505,25 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
             botPersona: msg.botPersona,
           },
         ]);
-      } else if (msg.type === "reaction") {
-        const kind = msg.kind as ReactionKind;
-        if (!REACTION_CONFIG[kind]) return;
-        addReaction(kind);
+      } else if (msg.type === "sticker") {
+        // Drop unknown sticker IDs — defends against future-version peers
+        // sending stickers we don't have files for
+        if (!isValidStickerId(msg.stickerId)) return;
+        setMessages((prev) => [
+          ...prev.slice(-200),
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            user: msg.user,
+            text: "",
+            time: Date.now(),
+            stickerId: msg.stickerId,
+          },
+        ]);
       }
     };
     room.on(RoomEvent.DataReceived, handleData);
     return () => { room.off(RoomEvent.DataReceived, handleData); };
-  }, [addReaction, room]);
+  }, [room]);
 
   // Persist messages to localStorage (keep only last 10 min)
   useEffect(() => {
@@ -616,20 +584,33 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
     setInput("");
   };
 
-  const sendReaction = (kind: ReactionKind) => {
+  // Sticker send: standalone message, no text input — Discord pattern.
+  // Picker calls this and immediately closes itself (handled in StickerPicker).
+  const sendSticker = (stickerId: string) => {
+    if (!isValidStickerId(stickerId)) return;
     const payload = encodeRoomDataMessage({
-      type: "reaction",
-      kind,
+      type: "sticker",
       user: viewerName,
+      stickerId,
     });
     room.localParticipant.publishData(payload, { reliable: true });
-    addReaction(kind);
+    setMessages((prev) => [
+      ...prev.slice(-200),
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        user: viewerName,
+        text: "",
+        time: Date.now(),
+        stickerId,
+      },
+    ]);
     if (aiAudienceEnabled) {
       void mirrorAiAudienceContextEvent({
         roomSlug: decodedRoom,
-        kind: "reaction",
+        kind: "chat_message",
         user: viewerName,
-        reactionKind: kind,
+        text: `[sticker:${stickerId}]`,
+        bot: false,
       }).catch(() => {});
     }
   };
@@ -699,78 +680,64 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
             ))}
           </div>
 
-          {/* Reaction strip — compact icon-only, supports tap = single, hold = continuous spam.
-              Mirrors IG/TikTok/YouTube Live: chat is the protagonist, reactions stay out of the way. */}
-          <div className="px-3 py-1 border-t border-border-pixel/50 flex items-center justify-between gap-1 shrink-0">
-            {(Object.entries(REACTION_CONFIG) as [ReactionKind, { label: string; icon: string; color: string; glowVar: string }][]).map(
-              ([kind, { icon, color, glowVar }]) => {
-                const tier = combo[kind]?.tier || 0;
-                const count = combo[kind]?.timestamps.length || 0;
-                const comboClass = tier >= 3 ? "reaction-btn-combo-3" : tier >= 2 ? "reaction-btn-combo-2" : tier >= 1 ? "reaction-btn-combo-1" : "";
-
-                const fireOnce = (btn: HTMLElement) => {
-                  spawnClickBurst(btn.getBoundingClientRect(), kind);
-                  sendReaction(kind);
-                };
-                const startHold = (btn: HTMLElement) => {
-                  endHold();
-                  // Immediate first fire + one-shot haptic at the start of the gesture
-                  fireOnce(btn);
-                  if (typeof navigator !== "undefined" && navigator.vibrate) {
-                    try { navigator.vibrate(12); } catch {}
-                  }
-                  // Auto-fire kicks in after a 240ms grace so quick taps are clearly single-fires
-                  holdRef.current.timeoutId = setTimeout(() => {
-                    holdRef.current.intervalId = setInterval(() => fireOnce(btn), 125); // ~8/sec
-                  }, 240);
-                };
-
-                return (
-                  <button
-                    key={kind}
-                    type="button"
-                    onPointerDown={(e) => {
-                      // Capture the pointer so we still get pointerup even if user drags off
-                      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-                      startHold(e.currentTarget as HTMLElement);
-                    }}
-                    onPointerUp={endHold}
-                    onPointerCancel={endHold}
-                    onPointerLeave={endHold}
-                    onContextMenu={(e) => e.preventDefault()}
-                    title={t(`reaction.${kind}`)}
-                    aria-label={t(`reaction.${kind}`)}
-                    className={`relative flex items-center justify-center gap-0.5 h-8 min-w-[36px] px-2 rounded text-base leading-none select-none touch-manipulation transition-transform duration-150 hover:scale-110 active:scale-90 ${comboClass}`}
-                    style={{
-                      backgroundColor: tier > 0
-                        ? `color-mix(in srgb, var(--${color}) ${10 + tier * 7}%, transparent)`
-                        : "transparent",
-                      WebkitTapHighlightColor: "transparent",
-                      "--glow-color": glowVar,
-                    } as React.CSSProperties}
-                  >
-                    <span>{icon}</span>
-                    {tier >= 1 && (
-                      <span
-                        className="font-[family-name:var(--font-pixel)] text-[7px] tabular-nums leading-none"
-                        style={{ color: `var(--${color})` }}
-                      >
-                        ×{count}
-                      </span>
-                    )}
-                  </button>
-                );
-              }
-            )}
-          </div>
-
           <div className="px-3 py-2 border-t border-border-pixel/50 shrink-0">
-            <form onSubmit={(e) => { e.preventDefault(); sendChat(); }} className="flex gap-2">
-              <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
+            <form onSubmit={(e) => { e.preventDefault(); sendChat(); }} className="flex gap-2 items-stretch">
+              <input
+                ref={chatInputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
                 placeholder={t('chat.placeholder')}
-                className="flex-1 bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-cyan focus:outline-none" />
-              <button type="submit"
-                className="px-3 py-1.5 bg-accent-cyan/20 border border-accent-cyan/40 text-accent-cyan text-xs hover:bg-accent-cyan/30 transition-colors">
+                className="flex-1 min-w-0 bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-cyan focus:outline-none"
+              />
+              {/* Emoji picker trigger + popover (Discord-style) */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { setEmojiOpen((v) => !v); setStickerOpen(false); }}
+                  className={`h-full px-2 border text-base leading-none transition-colors ${
+                    emojiOpen
+                      ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
+                      : "border-border-pixel text-text-secondary hover:text-accent-cyan hover:border-accent-cyan/60"
+                  }`}
+                  title="Emoji"
+                  aria-label="Open emoji picker"
+                >
+                  😀
+                </button>
+                {emojiOpen && (
+                  <EmojiPicker
+                    onSelect={insertEmoji}
+                    onClose={() => setEmojiOpen(false)}
+                  />
+                )}
+              </div>
+              {/* Sticker picker trigger + popover */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { setStickerOpen((v) => !v); setEmojiOpen(false); }}
+                  className={`h-full px-2 border text-base leading-none transition-colors ${
+                    stickerOpen
+                      ? "border-accent-pink text-accent-pink bg-accent-pink/10"
+                      : "border-border-pixel text-text-secondary hover:text-accent-pink hover:border-accent-pink/60"
+                  }`}
+                  title="Sticker"
+                  aria-label="Open sticker picker"
+                >
+                  🖼️
+                </button>
+                {stickerOpen && (
+                  <StickerPicker
+                    onSelect={sendSticker}
+                    onClose={() => setStickerOpen(false)}
+                  />
+                )}
+              </div>
+              <button
+                type="submit"
+                className="shrink-0 px-3 py-1.5 bg-accent-cyan/20 border border-accent-cyan/40 text-accent-cyan text-xs hover:bg-accent-cyan/30 transition-colors"
+              >
                 {t('chat.send')}
               </button>
             </form>
@@ -988,27 +955,10 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
         </div>
       )}
 
-      {/* Click-burst particles — viewport-anchored, work even when chat tab hides the video */}
-      {clickBursts.map((b) => (
-        <span
-          key={b.id}
-          className="click-scatter-particle"
-          style={{
-            left: `${b.x}px`,
-            top: `${b.y}px`,
-            "--scatter-x": `${b.dx}px`,
-            "--scatter-y": `${b.dy}px`,
-            "--scatter-glow": b.glow,
-          } as React.CSSProperties}
-        >
-          {b.icon}
-        </span>
-      ))}
     </div>
   );
 }
 
-// ── Constants ────────────────────────────────
 // ── Watch Layout (handles desktop/mobile) ────
 function WatchLayout({
   layoutMode, onLayoutChange, mobilePanel, onMobilePanelChange, identity, roomName,
@@ -1026,7 +976,6 @@ function WatchLayout({
 }) {
   const { t } = useI18n();
   const [desktop, setDesktop] = useState(false);
-  const { bursts, combo, showBanner, screenFlash, screenShake, addReaction } = useReactionSystem();
 
   useEffect(() => {
     const check = () => setDesktop(window.innerWidth >= 1024);
@@ -1035,12 +984,9 @@ function WatchLayout({
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  const videoProps = { bursts, showBanner, screenFlash, screenShake };
   const sidebarProps = {
     viewerName: identity,
     roomName,
-    addReaction,
-    combo,
     aiAudienceEnabled,
     streamStartedAt,
   };
@@ -1050,7 +996,7 @@ function WatchLayout({
       return (
         <div className="flex flex-1 min-h-0">
           <div className="flex-1 min-w-0 pixel-border-live m-2 mr-0 overflow-hidden">
-            <VideoArea layoutMode={layoutMode} onLayoutChange={onLayoutChange} {...videoProps} />
+            <VideoArea layoutMode={layoutMode} onLayoutChange={onLayoutChange} />
           </div>
           <div className="w-[320px] shrink-0 m-2 flex flex-col">
             <Sidebar {...sidebarProps} />
@@ -1062,7 +1008,7 @@ function WatchLayout({
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[960px] px-4 py-3 space-y-3">
           <div className="pixel-border-live aspect-video overflow-hidden">
-            <VideoArea layoutMode={layoutMode} onLayoutChange={onLayoutChange} {...videoProps} />
+            <VideoArea layoutMode={layoutMode} onLayoutChange={onLayoutChange} />
           </div>
           <div className="h-[400px]">
             <Sidebar {...sidebarProps} />
@@ -1077,7 +1023,7 @@ function WatchLayout({
     return (
       <div className="flex flex-col flex-1 min-h-0">
         <div className="pixel-border-live m-1 aspect-video overflow-hidden shrink-0">
-          <VideoArea layoutMode="default" onLayoutChange={onLayoutChange} {...videoProps} />
+          <VideoArea layoutMode="default" onLayoutChange={onLayoutChange} />
         </div>
         <div className="px-2 py-1 flex items-center gap-2">
           <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary truncate flex-1">

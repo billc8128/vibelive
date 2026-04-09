@@ -46,12 +46,24 @@ export type SceneAction =
 
 export function sceneReducer(state: Scene, action: SceneAction): Scene {
   switch (action.type) {
-    case "addSource":
+    case "addSource": {
+      // Dedupe — 防止 React strict mode 双 mount / HMR 等情况让 init
+      // 跑两次产生重复 source (用户报告"双框" bug). 同 type + 同 avatarId
+      // 的 live2d source 视为重复, 跳过.
+      const incoming = action.source;
+      if (incoming.type === "live2d") {
+        const incomingAvatar = incoming.avatarId;
+        const dup = state.sources.some(
+          (s) => s.type === "live2d" && s.avatarId === incomingAvatar
+        );
+        if (dup) return state;
+      }
       return {
         ...state,
-        sources: [...state.sources, action.source],
-        selectedId: action.source.id,
+        sources: [...state.sources, incoming],
+        selectedId: incoming.id,
       };
+    }
 
     case "removeSource":
       return {

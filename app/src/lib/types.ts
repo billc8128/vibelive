@@ -24,8 +24,6 @@ export type CodingTool =
 
 export type StreamStatus = "live" | "offline" | "away";
 
-export type ReactionType = "want_to_use" | "interesting" | "looking_forward";
-
 export interface Streamer {
   id: string;
   username: string;
@@ -51,12 +49,6 @@ export interface Project {
   thumbnailUrl: string;
 }
 
-export interface Reactions {
-  want_to_use: number;
-  interesting: number;
-  looking_forward: number;
-}
-
 export interface Stream {
   id: string;
   streamer: Streamer;
@@ -64,7 +56,6 @@ export interface Stream {
   status: StreamStatus;
   codingTool: CodingTool;
   viewers: number;
-  reactions: Reactions;
   stages: ProjectStage[];
   startedAt: string;
   totalDevTime: number; // minutes
@@ -111,11 +102,3 @@ export const TOOL_LABELS: Record<CodingTool, string> = {
   other: "其他",
 };
 
-export const REACTION_CONFIG: Record<
-  ReactionType,
-  { label: string; icon: string }
-> = {
-  want_to_use: { label: "想用", icon: "🚀" },
-  interesting: { label: "有趣", icon: "✨" },
-  looking_forward: { label: "期待", icon: "🔥" },
-};

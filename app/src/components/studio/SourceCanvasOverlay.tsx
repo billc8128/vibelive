@@ -245,6 +245,16 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
     scaleRef.current = scale;
   }, [scale]);
 
+  // Overlay root ref — global pointerdown handler 用 contains 判断
+  // 点击是否落在 overlay 内, 实现"点击外部 deselect"
+  const overlayRootRef = useRef<HTMLDivElement>(null);
+
+  // selectedId 也用 ref 拿最新值, 避免 effect dep 包含 selectedId 反复 install
+  const selectedIdRef = useRef(scene.selectedId);
+  useEffect(() => {
+    selectedIdRef.current = scene.selectedId;
+  });
+
   // 吸附 guides (state, 拖动时显示)
   const [guides, setGuides] = useState<Guide[]>([]);
 
@@ -284,28 +294,55 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
     [scene.sources]
   );
 
-  // ── Drag move handlers (绑在 source target div) ──
-  const handleSourcePointerDown = (
-    e: ReactPointerEvent<HTMLDivElement>,
-    source: Source
-  ) => {
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    e.preventDefault();
-    setMenu(null);
-    dispatch({ type: "select", id: source.id });
-    dragRef.current = {
-      kind: "move",
-      sourceId: source.id,
-      pointerId: e.pointerId,
-      startClient: { x: e.clientX, y: e.clientY },
-      origTransform: { ...source.transform },
-    };
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // ignore
+  // ── Alpha-based hit test ─────────────────────────────────────
+  // 读 compositor 2D canvas 的指定像素 alpha. alpha > 0 = 该位置有
+  // 模型实际像素 → 找包含 (cx, cy) 的最高 z source. alpha == 0 = 透明
+  // 区域 → null (不算 hit, 让用户穿透到 background).
+  //
+  // 跟单纯的 box hit test 区别: source 的 transform.box 里很多区域
+  // 是透明 padding (Live2D contain mode 适配后模型只占 box 一小部分),
+  // box test 会让 user hover/click 整个 box, 视觉上不像在跟模型交互.
+  // alpha test 真正只在模型像素上响应, 体验跟"直接点模型"一致.
+  const hitTestByAlpha = (clientX: number, clientY: number): Source | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const r = canvas.getBoundingClientRect();
+    if (
+      clientX < r.left ||
+      clientX >= r.right ||
+      clientY < r.top ||
+      clientY >= r.bottom
+    ) {
+      return null;
     }
+    // Client → canvas 内部坐标 (scene 空间)
+    const cx = ((clientX - r.left) / r.width) * canvas.width;
+    const cy = ((clientY - r.top) / r.height) * canvas.height;
+    try {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      const px = ctx.getImageData(Math.floor(cx), Math.floor(cy), 1, 1).data;
+      if (px[3] === 0) return null; // 完全透明
+    } catch {
+      // getImageData 失败 (比如 canvas tainted by cross-origin) → 不 hit
+      return null;
+    }
+    // 找包含 (cx, cy) 的最高 z source
+    const ordered = [...scene.sources].sort(
+      (a, b) => b.transform.z - a.transform.z
+    );
+    for (const s of ordered) {
+      const t = s.transform;
+      if (
+        cx >= t.x &&
+        cx < t.x + t.width &&
+        cy >= t.y &&
+        cy < t.y + t.height
+      ) {
+        return s;
+      }
+    }
+    return null;
   };
 
   // ── Resize drag handlers (绑在 handle) ──
@@ -391,25 +428,85 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
     setGuides([]);
   };
 
-  // ── Background pointer down (deselect) ──
-  const handleBackgroundDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+  // ── Root pointer down — alpha hit test 决定 select / deselect / drag
+  const handleRootPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
-    if (e.target === e.currentTarget) {
+    // 如果 click 在 handle 上, handle 自己 stopPropagation 处理 resize,
+    // event 不冒泡到 root, 这里走不到. 安全检查.
+    if (e.target !== e.currentTarget) return;
+
+    const hit = hitTestByAlpha(e.clientX, e.clientY);
+    if (!hit) {
+      // 透明区域 / 在 source box 外 → deselect
       dispatch({ type: "select", id: null });
       setMenu(null);
+      return;
+    }
+    // 命中 source → select + 立即开始 drag
+    e.preventDefault();
+    setMenu(null);
+    dispatch({ type: "select", id: hit.id });
+    dragRef.current = {
+      kind: "move",
+      sourceId: hit.id,
+      pointerId: e.pointerId,
+      startClient: { x: e.clientX, y: e.clientY },
+      origTransform: { ...hit.transform },
+    };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
     }
   };
 
-  // ── Right click → context menu ──
-  const handleContextMenu = (
-    e: ReactMouseEvent<HTMLDivElement>,
-    source: Source
-  ) => {
+  // ── Root pointer move — drag 跑 drag, 否则 hover detection
+  const handleRootPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const ds = dragRef.current;
+    if (ds && ds.pointerId === e.pointerId) {
+      // 让现有的 drag move handler 处理
+      handlePointerMove(e);
+      return;
+    }
+    // 没在拖, 用 hit test 检测 hover
+    const hit = hitTestByAlpha(e.clientX, e.clientY);
+    setHoverId(hit?.id ?? null);
+  };
+
+  const handleRootPointerLeave = () => {
+    if (!dragRef.current) {
+      setHoverId(null);
+    }
+  };
+
+  // ── Root context menu — 只在 hit 到 source 像素时显示我们的 menu
+  const handleRootContextMenu = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const hit = hitTestByAlpha(e.clientX, e.clientY);
+    if (!hit) return; // 透明区域 → 不阻止浏览器默认 menu, 也不显示我们的
     e.preventDefault();
     e.stopPropagation();
-    dispatch({ type: "select", id: source.id });
-    setMenu({ clientX: e.clientX, clientY: e.clientY, sourceId: source.id });
+    dispatch({ type: "select", id: hit.id });
+    setMenu({ clientX: e.clientX, clientY: e.clientY, sourceId: hit.id });
   };
+
+  // ── Window-level pointerdown — 点击 overlay 外的任何地方 deselect.
+  // 让 inspector / source list / 其他 page 元素的 click 既能触发自己的
+  // handler, 也能 deselect canvas 上的 source. 用 overlayRootRef.contains
+  // 区分"在 overlay 内 (overlay 自己处理)"和"在 overlay 外 (要 deselect)".
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      if (!selectedIdRef.current) return; // 没选中, 不需要 deselect
+      const tgt = e.target as Node | null;
+      if (!tgt) return;
+      // 在 overlay 内 → 让 overlay 自己处理 (source pointerdown / handle / background)
+      if (overlayRootRef.current?.contains(tgt)) return;
+      dispatch({ type: "select", id: null });
+      setMenu(null);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [dispatch]);
 
   // 关闭 context menu (点击其他地方)
   useEffect(() => {
@@ -550,11 +647,24 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
 
   return (
     <div
+      ref={overlayRootRef}
       className="absolute inset-0"
-      style={{ pointerEvents: "auto" }}
-      onPointerDown={handleBackgroundDown}
+      style={{
+        pointerEvents: "auto",
+        // cursor 跟随 hover state — alpha hit test 命中 source 时 move
+        cursor: hoverId ? "move" : "default",
+        touchAction: "none",
+      }}
+      onPointerDown={handleRootPointerDown}
+      onPointerMove={handleRootPointerMove}
+      onPointerLeave={handleRootPointerLeave}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onContextMenu={handleRootContextMenu}
     >
-      {/* Source target divs (按 z-index 升序, 选中的最后渲染保证 handles 在最上) */}
+      {/* Source target divs — 纯 visual, pointer-events: none.
+          Hover / select / click / context menu 全部走 root div 的 alpha
+          hit test. source div 只显示边框 (selected / hover) 用作视觉提示. */}
       {sortedSources.map((source) => {
         const t = source.transform;
         const isSelected = source.id === scene.selectedId;
@@ -562,26 +672,18 @@ export function SourceCanvasOverlay({ scene, dispatch, canvasRef }: Props) {
         return (
           <div
             key={source.id}
-            onPointerDown={(e) => handleSourcePointerDown(e, source)}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            onPointerEnter={() => setHoverId(source.id)}
-            onPointerLeave={() => setHoverId(null)}
-            onContextMenu={(e) => handleContextMenu(e, source)}
-            className={`absolute select-none ${
+            className={`absolute select-none pointer-events-none ${
               isSelected
-                ? "border-2 border-accent-cyan cursor-move"
+                ? "border-2 border-accent-cyan"
                 : isHover
-                  ? "border border-accent-cyan/70 cursor-move"
-                  : "border border-white/15 cursor-move"
+                  ? "border border-accent-cyan/70"
+                  : ""
             }`}
             style={{
               left: t.x * scale,
               top: t.y * scale,
               width: t.width * scale,
               height: t.height * scale,
-              touchAction: "none",
             }}
             title={source.name}
           />

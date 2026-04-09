@@ -12,7 +12,7 @@ import { useI18n } from "@/lib/i18n/context";
 interface Filters {
   category: ProductCategory | null;
   platform: PlatformType | null;
-  sortBy: "viewers" | "reactions" | "recent";
+  sortBy: "viewers" | "recent";
 }
 
 interface RealStream {
@@ -90,11 +90,6 @@ export default function HomePage() {
 
     streams.sort((a, b) => {
       if (filters.sortBy === "viewers") return b.viewers - a.viewers;
-      if (filters.sortBy === "reactions") {
-        const tA = a.reactions.want_to_use + a.reactions.interesting + a.reactions.looking_forward;
-        const tB = b.reactions.want_to_use + b.reactions.interesting + b.reactions.looking_forward;
-        return tB - tA;
-      }
       return new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime();
     });
 
@@ -117,11 +112,6 @@ export default function HomePage() {
   const sideStreams = liveStreams.slice(1, 3);
   const restStreams = filteredStreams.filter((s) => s !== featuredStream && !sideStreams.includes(s));
 
-  const totalReactions = MOCK_STREAMS.reduce(
-    (sum, s) => sum + s.reactions.want_to_use + s.reactions.interesting + s.reactions.looking_forward,
-    0
-  );
-
   return (
     <div className="ambient-gradient min-h-screen">
       {/* Live Ticker */}
@@ -129,11 +119,10 @@ export default function HomePage() {
 
       <div className="mx-auto max-w-[1400px] px-4 py-5">
         {/* ── Stats Dashboard Strip ─────────── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
           {[
             { label: t('stat.liveNow'), value: (realStreams.length + liveStreams.length).toString(), icon: "◉", color: "text-accent-pink", glow: "glow-pink" },
             { label: t('stat.viewers'), value: MOCK_STREAMS.reduce((s, st) => s + st.viewers, 0).toString(), icon: "◈", color: "text-accent-cyan", glow: "glow-cyan" },
-            { label: t('stat.totalReactions'), value: totalReactions.toString(), icon: "◆", color: "text-accent-yellow", glow: "" },
             { label: t('stat.totalProjects'), value: (MOCK_STREAMS.length + realStreams.length).toString(), icon: "◇", color: "text-accent-green", glow: "glow-green" },
           ].map((stat) => (
             <div key={stat.label} className="pixel-border bg-bg-card/80 p-3 text-center">

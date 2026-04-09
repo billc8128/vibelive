@@ -6,17 +6,12 @@ export function LiveTicker() {
   const { t } = useI18n();
 
   const TICKER_ITEMS = [
-    { icon: "🚀", text: t('ticker.wantToUse', { user: '观众小李', project: 'NoteFlow' }), color: "text-accent-green" },
-    { icon: "✨", text: t('ticker.interesting', { user: 'CodeFan99', project: 'SnapMetrics' }), color: "text-accent-cyan" },
-    { icon: "🔥", text: t('ticker.lookingForward', { user: '新手观察者', project: 'QuickCut' }), color: "text-accent-orange" },
     { icon: "🎮", text: t('ticker.startedStreaming', { user: 'PixelCrafter', project: 'NoteFlow' }), color: "text-accent-pink" },
-    { icon: "🏆", text: t('ticker.reactions', { user: 'Code Wizard', project: 'QuickCut', count: '2664' }), color: "text-accent-yellow" },
     { icon: "⚡", text: t('ticker.using', { user: '独立开发者小明', tool: 'Bolt', project: 'TaskForge' }), color: "text-accent-purple" },
     { icon: "🌟", text: t('ticker.phase', { user: 'AI Artisan', project: 'LangBridge', phase: '语音翻译' }), color: "text-accent-cyan" },
     { icon: "📦", text: t('ticker.launched', { user: 'Dev Sensei', project: 'CodeQuest' }), color: "text-accent-green" },
     { icon: "💻", text: t('ticker.using', { user: 'Neural Nomad', tool: 'Copilot', project: 'ReviewBot' }), color: "text-accent-pink" },
     { icon: "🎯", text: t('ticker.published', { project: 'MindMap AI' }), color: "text-accent-yellow" },
-    { icon: "🔧", text: t('ticker.wantToUseCount', { project: 'ReviewBot', count: '999' }), color: "text-accent-green" },
     { icon: "🎲", text: t('ticker.building', { user: 'indie_hacker', project: 'PixelQuest', phase: '战斗系统' }), color: "text-accent-purple" },
   ];
 

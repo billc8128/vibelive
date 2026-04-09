@@ -153,11 +153,19 @@ export class Live2DRenderer implements SourceRenderer {
     this.vtubeConfigUrl = opts.vtubeConfigUrl;
     this.onHotkeysReady = opts.onHotkeysReady;
 
-    // 表情文件查找的 baseUrl: 跟 .vtube.json 同目录, 以及 animetions/ 子目录
+    // 表情文件查找的 baseUrl 候选 — 不同 VTuber 模型的 expression 文件
+    // 放在不同子目录, 没有标准. 试常见命名 + dir 自身, 第一个 200 的胜出.
+    // (saba1B 的 vtube.json 没标 Folder 字段, 但实际文件在 animetions/,
+    // 所以默认 baseUrls 就要包含这个)
     if (opts.vtubeConfigUrl) {
       const lastSlash = opts.vtubeConfigUrl.lastIndexOf("/");
       const dir = lastSlash >= 0 ? opts.vtubeConfigUrl.slice(0, lastSlash) : "";
-      this.expressionBaseUrls = [`${dir}/animetions`, dir];
+      this.expressionBaseUrls = [
+        `${dir}/animetions`, // saba1B 实际位置
+        `${dir}/expressions`, // 常见命名
+        `${dir}/exp`, // 常见命名
+        dir, // 跟 vtube.json 同目录
+      ];
     }
   }
 
@@ -391,7 +399,12 @@ export class Live2DRenderer implements SourceRenderer {
         //    在 ParamAngleY 上 add sin 波 (面捕的 set 之后 add), 让模型有
         //    持续的轻微上下点头, 模拟自然呼吸. 振幅 / 频率从 studioConfig
         //    读, 用户 UI 可调.
-        if (studioConfig.breathEnabled) {
+        //
+        // ⚠ 必须 gate 在 latestInputs 存在的条件下: breath 是 face tracking
+        // 的 "配合" 不是 "替代". 没启用面捕 (latestInputs 是 null) 时
+        // breath 单独写 sin 波 → 模型自己缓慢点头 → 用户感觉"模型自己摆动
+        // 不跟我". Fail-loud: 没面捕就让模型完全静态, 让用户立刻知道.
+        if (studioConfig.breathEnabled && this.latestInputs) {
           const cm = internal.coreModel;
           const t = performance.now() / 1000;
           const breath =
@@ -481,8 +494,19 @@ export class Live2DRenderer implements SourceRenderer {
     const next = source.activeExpression ?? null;
     if (next === this.currentExpressionName) return;
     this.currentExpressionName = next;
+
+    // 拼 file path: 如果 hotkey 有 folder 字段, 用 ${folder}/${file},
+    // 否则就是裸 file. expression-applier 会用 baseUrls 数组 fallback.
+    let filePath = next;
+    if (next && source.hotkeys) {
+      const hotkey = source.hotkeys.find((h) => h.file === next);
+      if (hotkey?.folder) {
+        filePath = `${hotkey.folder}/${next}`;
+      }
+    }
+
     // setActive 是 fire-and-forget — 内部 fetch + cache + fade
-    this.expressions.setActive(this.expressionBaseUrls, next).catch((e) => {
+    this.expressions.setActive(this.expressionBaseUrls, filePath).catch((e) => {
       console.warn("[live2d] expression load failed:", e);
     });
   }

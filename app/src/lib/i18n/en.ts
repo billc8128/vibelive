@@ -52,10 +52,8 @@ export const en: Record<TranslationKey, string> = {
   // ── Stats ─────────────────────────────────
   "stat.liveNow": "Live Now",
   "stat.viewers": "Viewers",
-  "stat.totalReactions": "Reactions",
   "stat.totalProjects": "Projects",
   "stat.viewers_label": "Viewers",
-  "stat.totalReaction": "Reactions",
 
   // ── Home Page ─────────────────────────────
   "home.followingLive": "Following — Now Live",
@@ -80,7 +78,6 @@ export const en: Record<TranslationKey, string> = {
   "filter.sort": "Sort",
   "filter.all": "All",
   "filter.sortViewers": "Most Viewers",
-  "filter.sortReactions": "Most Reactions",
   "filter.sortRecent": "Most Recent",
 
   // ── Categories ────────────────────────────
@@ -111,13 +108,6 @@ export const en: Record<TranslationKey, string> = {
   "tool.bolt": "Bolt",
   "tool.replit": "Replit",
   "tool.other": "Other",
-
-  // ── Reactions ─────────────────────────────
-  "reaction.want_to_use": "Want to Use",
-  "reaction.interesting": "Interesting",
-  "reaction.looking_forward": "Looking Forward",
-  "reaction.mind_blown": "Mind Blown",
-  "reaction.big_brain": "Big Brain",
 
   // ── Profile Page ──────────────────────────
   "profile.tab.streams": "My Streams",
@@ -293,7 +283,6 @@ export const en: Record<TranslationKey, string> = {
   "stream.awayDesc": "Please wait, the stream will resume soon",
   "stream.completedTitle": "Project completed",
   "stream.tryProduct": "Try the product",
-  "stream.totalReactions": "Reactions",
   "stream.hideChat": "Hide Chat",
   "stream.showChat": "Show Chat",
 
@@ -345,16 +334,11 @@ export const en: Record<TranslationKey, string> = {
   "time.minutes": "{m}m",
 
   // ── Ticker ────────────────────────────────
-  "ticker.wantToUse": "{user} wants to use {project}",
-  "ticker.interesting": "{user} finds {project} interesting",
-  "ticker.lookingForward": "{user} is looking forward to {project}",
   "ticker.startedStreaming": "{user} started streaming {project}",
-  "ticker.reactions": "{user}'s {project} got {count} reactions",
   "ticker.using": "{user} is building {project} with {tool}",
   "ticker.phase": "{user}'s {project} entered {phase} phase",
   "ticker.launched": "{user}'s {project} is live!",
   "ticker.published": "{project} is out — go try it!",
-  "ticker.wantToUseCount": "{project} got {count} 'Want to Use' reactions",
   "ticker.building": "{user}'s {project} is building {phase}",
 
   // ── Meta ──────────────────────────────────

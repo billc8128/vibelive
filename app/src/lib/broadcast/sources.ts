@@ -52,6 +52,9 @@ export interface Live2DHotkey {
   action: "ToggleExpression" | "RemoveAllExpressions" | "Other";
   /** .exp3.json 文件名 (RemoveAllExpressions 时为空) */
   file: string;
+  /** vtube.json 里的 Folder 字段 — 子目录名, 空字符串表示文件直接在
+   *  vtube.json 同目录. expressionApplier 用 folder + file 拼最终路径. */
+  folder: string;
 }
 
 export interface Live2DSource extends BaseSource {

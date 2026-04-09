@@ -9,13 +9,13 @@ export interface RoomChatMessage {
   botPersona?: string;
 }
 
-export interface RoomReactionMessage {
-  type: "reaction";
-  kind: string;
+export interface RoomStickerMessage {
+  type: "sticker";
   user: string;
+  stickerId: string;
 }
 
-export type RoomDataMessage = RoomChatMessage | RoomReactionMessage;
+export type RoomDataMessage = RoomChatMessage | RoomStickerMessage;
 
 export interface ChatTimelineMessage {
   id: string;
@@ -24,6 +24,7 @@ export interface ChatTimelineMessage {
   time: number;
   bot?: boolean;
   botPersona?: string;
+  stickerId?: string;
 }
 
 export function isBotChatMessage(
@@ -55,14 +56,14 @@ export function parseRoomDataMessage(
     }
 
     if (
-      parsed.type === "reaction" &&
+      parsed.type === "sticker" &&
       typeof parsed.user === "string" &&
-      typeof parsed.kind === "string"
+      typeof parsed.stickerId === "string"
     ) {
       return {
-        type: "reaction",
-        kind: parsed.kind,
+        type: "sticker",
         user: parsed.user,
+        stickerId: parsed.stickerId,
       };
     }
   } catch {}

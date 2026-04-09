@@ -5,7 +5,6 @@ import Image from "next/image";
 import { Stream } from "@/lib/types";
 import { ToolBadge } from "./ToolBadge";
 import { ProgressBar } from "./ProgressBar";
-import { ReactionButtons } from "./ReactionButtons";
 import { useI18n } from "@/lib/i18n/context";
 
 interface StreamCardProps {
@@ -15,7 +14,7 @@ interface StreamCardProps {
 
 export function StreamCard({ stream, variant = "default" }: StreamCardProps) {
   const { t } = useI18n();
-  const { streamer, project, status, codingTool, viewers, reactions, stages } =
+  const { streamer, project, status, codingTool, viewers, stages } =
     stream;
   const isLive = status === "live";
   const isAway = status === "away";
@@ -116,10 +115,6 @@ export function StreamCard({ stream, variant = "default" }: StreamCardProps) {
               <span key={p} className="pixel-tag">{t(`platform.${p}` as any)}</span>
             ))}
           </div>
-
-          <div onClick={(e) => e.preventDefault()}>
-            <ReactionButtons reactions={reactions} size="sm" />
-          </div>
         </div>
       </div>
     </Link>
@@ -128,9 +123,7 @@ export function StreamCard({ stream, variant = "default" }: StreamCardProps) {
 
 function FeaturedCard({ stream }: { stream: Stream }) {
   const { t } = useI18n();
-  const { streamer, project, status, codingTool, viewers, reactions, stages } =
-    stream;
-  const isLive = status === "live";
+  const { streamer, project, codingTool, viewers, stages } = stream;
 
   return (
     <Link href={`/stream/${stream.id}`} className="block group h-full">
@@ -204,17 +197,13 @@ function FeaturedCard({ stream }: { stream: Stream }) {
           </div>
         </div>
 
-        {/* Reactions strip */}
-        <div className="p-3 border-t border-border-pixel/50" onClick={(e) => e.preventDefault()}>
-          <ReactionButtons reactions={reactions} size="sm" />
-        </div>
       </div>
     </Link>
   );
 }
 
 function CompactCard({ stream }: { stream: Stream }) {
-  const { streamer, project, status, codingTool, viewers, reactions } = stream;
+  const { streamer, project, status, codingTool, viewers } = stream;
   const isLive = status === "live";
 
   return (
@@ -255,9 +244,6 @@ function CompactCard({ stream }: { stream: Stream }) {
               {viewers}
             </span>
           )}
-          <span className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary block mt-1">
-            🚀{reactions.want_to_use}
-          </span>
         </div>
       </div>
     </Link>
