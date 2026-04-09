@@ -17,9 +17,10 @@ export interface StudioConfig {
   /** 眼睛开合 (blink) 灵敏度. 1.0 = 原始. 调大 = 更早判定为闭眼,
    *  调小 = 需要明显闭才闭. */
   eyeOpenScale: number;
-  /** 眼睛默认开合度 — 用户校准时"自然睁眼"对应模型的睁开比例.
-   *  1.0 = 模型完全瞪大眼 (太警觉), 0.8 = 自然放松, 0.6 = 半睁惺忪.
-   *  闭眼时从这个值衰减到 0, 睁更大时从这个值升到 1. */
+  /** 眼睛默认开合度 — "基准线" (不是 cap), 你眼睛默认状态对应的输出值.
+   *  output = default - blinkRel (single linear baseline shift).
+   *  1.0 = 默认瞪大眼, 0.8 = 自然放松, 0.6 = 半睁惺忪, 0.3 = 眯眼.
+   *  闭眼时从基准线下降, 睁更大时从基准线上升, 而不是从 1.0 衰减. */
   eyeOpenDefault: number;
   /** 眼球追踪 (look up/down/left/right) 灵敏度. 1.0 = 原始. */
   eyeBallScale: number;
