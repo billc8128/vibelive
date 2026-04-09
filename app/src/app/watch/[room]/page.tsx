@@ -13,26 +13,31 @@ import {
 import { Track, RoomEvent } from "livekit-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ChatMessageRow } from "@/components/watch/chat/ChatMessageRow";
 import { createClient } from "@/lib/supabase/client";
+import {
+  encodeRoomDataMessage,
+  parseRoomDataMessage,
+  type ChatTimelineMessage,
+} from "@/lib/chat/protocol";
+import {
+  restoreChatTimeline,
+  serializeChatTimeline,
+} from "@/lib/chat/storage";
 import { useNickname } from "@/lib/useNickname";
 import { useI18n } from "@/lib/i18n/context";
+import type { TranslationKey } from "@/lib/i18n/zh";
+import { isViewerParticipant } from "@/lib/participants";
+import { resolveViewerIdentity } from "@/lib/livekit/viewerIdentity";
+import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
 import {
   ReactionOverlay,
   useReactionSystem,
   REACTION_CONFIG,
   type ReactionKind,
   type OverlayBurst,
-  type ComboTier,
   type ComboState,
 } from "@/components/ReactionOverlay";
-
-// ── Types ────────────────────────────────────
-interface ChatMsg {
-  id: string;
-  user: string;
-  text: string;
-  time: number;
-}
 
 type LayoutMode = "theater" | "default" | "fullscreen";
 
@@ -72,16 +77,14 @@ interface ChannelData {
 }
 
 const CHAT_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 // ── Player Controls ──────────────────────────
 function PlayerControls({
-  videoEl,
+  videoRef,
   layoutMode,
   onLayoutChange,
 }: {
-  videoEl: HTMLVideoElement | null;
+  videoRef: { current: HTMLVideoElement | null };
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
 }) {
@@ -118,26 +121,30 @@ function PlayerControls({
   }, []);
 
   const togglePause = () => {
-    if (!videoEl) return;
-    if (videoEl.paused) {
-      videoEl.play();
+    const player = videoRef.current;
+    if (!player) return;
+    if (player.paused) {
+      player.play();
       setPaused(false);
     } else {
-      videoEl.pause();
+      player.pause();
       setPaused(true);
     }
   };
 
   const toggleMute = () => {
-    if (!videoEl) return;
-    videoEl.muted = !videoEl.muted;
-    setMuted(videoEl.muted);
+    const player = videoRef.current;
+    if (!player) return;
+    const nextMuted = !player.muted;
+    player.muted = nextMuted;
+    setMuted(nextMuted);
   };
 
   const changeVolume = (v: number) => {
-    if (!videoEl) return;
-    videoEl.volume = v / 100;
-    videoEl.muted = v === 0;
+    const player = videoRef.current;
+    if (!player) return;
+    player.volume = v / 100;
+    player.muted = v === 0;
     setVolume(v);
     setMuted(v === 0);
   };
@@ -288,12 +295,10 @@ function VideoArea({
     { onlySubscribed: true }
   );
   const participants = useParticipants();
-  // 真实观众数 = 排除有 publish 权限的 (主播 + OBS ingress 虚拟参与者)
-  // 以及首页 hover 卡片产生的临时连接 (identity 前缀 hover-, 见 LiveStreamCard)
-  const viewerCount = participants.filter(
-    (p) => !p.permissions?.canPublish && !p.identity.startsWith("hover-")
-  ).length;
-  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  // isViewerParticipant 排除主播/OBS ingress (canPublish), AI audience bot
+  // (ai-audience: 前缀), 以及首页 hover 卡片的临时连接 (hover- 前缀, commit 0e7cd81).
+  const viewerCount = participants.filter(isViewerParticipant).length;
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // 主画面: 优先 ScreenShare, 没有再退到 Camera (OBS 模式)
   // 主播脸 (PiP): 仅当 ScreenShare 是主画面时, Camera 作为右下角小窗
@@ -311,9 +316,9 @@ function VideoArea({
   const videoContainerRef = useCallback((node: HTMLDivElement | null) => {
     if (node) {
       const vid = node.querySelector("video");
-      if (vid) setVideoEl(vid);
+      if (vid) videoRef.current = vid;
     }
-  }, [screenTrack]);
+  }, []);
 
   if (!screenTrack) {
     return (
@@ -364,7 +369,11 @@ function VideoArea({
       </div>
 
       {/* Player controls */}
-      <PlayerControls videoEl={videoEl} layoutMode={layoutMode} onLayoutChange={onLayoutChange} />
+      <PlayerControls
+        videoRef={videoRef}
+        layoutMode={layoutMode}
+        onLayoutChange={onLayoutChange}
+      />
     </div>
   );
 }
@@ -379,39 +388,24 @@ const STAGES_DATA = [
   { value: "发布中", labelKey: "goLive.stage.deploy" },
   { value: "已完成", labelKey: "goLive.stage.done" },
 ];
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
-function Sidebar({ viewerName, roomName, addReaction, combo }: {
+function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, streamStartedAt }: {
   viewerName: string;
   roomName: string;
   addReaction: (kind: ReactionKind) => void;
   combo: ComboState;
+  aiAudienceEnabled: boolean;
+  streamStartedAt: string | null;
 }) {
   const { t } = useI18n();
   const room = useRoomContext();
   const participants = useParticipants();
-  // 真正的"观众" = 没有 publish 权限的 participant.
-  // 排除: 主播 (canPublish), OBS ingress 虚拟参与者 obs-{slug},
-  //      以及首页 hover 卡片的临时连接 (identity 前缀 hover-).
-  const viewers = participants.filter(
-    (p) => !p.permissions?.canPublish && !p.identity.startsWith("hover-")
-  );
+  // 见 isViewerParticipant: 排除主播/OBS ingress, AI audience bot, hover 预览.
+  const viewers = participants.filter(isViewerParticipant);
   const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
   const chatStorageKey = `vibelive-chat-${decodedRoom}`;
-  const [messages, setMessages] = useState<ChatMsg[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem(chatStorageKey);
-      if (!raw) return [];
-      const saved: ChatMsg[] = JSON.parse(raw);
-      const cutoff = Date.now() - CHAT_TTL_MS;
-      return saved.filter((m) => m.time > cutoff).slice(-200);
-    } catch {
-      return [];
-    }
-  });
+  const [messages, setMessages] = useState<ChatTimelineMessage[]>([]);
   const [input, setInput] = useState("");
   const [streamInfo, setStreamInfo] = useState<{
     project_name?: string; description?: string; stage?: string; streamer_name?: string; started_at?: string; user_id?: string;
@@ -441,7 +435,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
         setSaving(false);
       }, 600);
     },
-    [roomName, isStreamer]
+    [decodedRoom, isStreamer]
   );
 
   const updateField = (key: string, value: string) => {
@@ -483,38 +477,65 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
     fetchInfo();
     const interval = setInterval(fetchInfo, 15000);
     return () => clearInterval(interval);
-  }, [roomName]);
+  }, [decodedRoom]);
 
   // Data channel messages — skip messages from self (already added locally in sendChat/sendReaction)
   useEffect(() => {
     const handleData = (payload: Uint8Array, participant?: { identity: string }) => {
       if (participant?.identity === room.localParticipant.identity) return;
-      try {
-        const msg = JSON.parse(textDecoder.decode(payload));
-        if (msg.type === "chat") {
-          setMessages((prev) => [
-            ...prev.slice(-200),
-            { id: `${Date.now()}-${Math.random()}`, user: msg.user, text: String(msg.text).slice(0, 500), time: Date.now() },
-          ]);
-        } else if (msg.type === "reaction") {
-          const kind = msg.kind as ReactionKind;
-          if (!REACTION_CONFIG[kind]) return;
-          addReaction(kind);
-        }
-      } catch {}
+      const msg = parseRoomDataMessage(payload);
+      if (!msg) return;
+      if (msg.type === "chat") {
+        setMessages((prev) => [
+          ...prev.slice(-200),
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            user: msg.user,
+            text: msg.text.slice(0, 500),
+            time: Date.now(),
+            bot: msg.bot,
+            botPersona: msg.botPersona,
+          },
+        ]);
+      } else if (msg.type === "reaction") {
+        const kind = msg.kind as ReactionKind;
+        if (!REACTION_CONFIG[kind]) return;
+        addReaction(kind);
+      }
     };
     room.on(RoomEvent.DataReceived, handleData);
     return () => { room.off(RoomEvent.DataReceived, handleData); };
-  }, [room]);
+  }, [addReaction, room]);
 
   // Persist messages to localStorage (keep only last 10 min)
   useEffect(() => {
-    const cutoff = Date.now() - CHAT_TTL_MS;
-    const fresh = messages.filter((m) => m.time > cutoff);
+    if (typeof window === "undefined") return;
     try {
-      localStorage.setItem(chatStorageKey, JSON.stringify(fresh.slice(-200)));
+      const raw = localStorage.getItem(chatStorageKey);
+      setMessages(
+        restoreChatTimeline({
+          raw,
+          sessionStartedAt: streamStartedAt,
+          ttlMs: CHAT_TTL_MS,
+        }).slice(-200),
+      );
+    } catch {
+      setMessages([]);
+    }
+  }, [chatStorageKey, streamStartedAt]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        chatStorageKey,
+        serializeChatTimeline({
+          messages: messages.slice(-200),
+          sessionStartedAt: streamStartedAt,
+          ttlMs: CHAT_TTL_MS,
+        }),
+      );
     } catch {}
-  }, [messages, chatStorageKey]);
+  }, [messages, chatStorageKey, streamStartedAt]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -523,19 +544,44 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   const sendChat = () => {
     const text = input.trim();
     if (!text) return;
-    const payload = textEncoder.encode(JSON.stringify({ type: "chat", user: viewerName, text }));
+    const payload = encodeRoomDataMessage({
+      type: "chat",
+      user: viewerName,
+      text,
+    });
     room.localParticipant.publishData(payload, { reliable: true });
     setMessages((prev) => [
       ...prev.slice(-200),
       { id: `${Date.now()}-${Math.random()}`, user: viewerName, text, time: Date.now() },
     ]);
+    if (aiAudienceEnabled) {
+      void mirrorAiAudienceContextEvent({
+        roomSlug: decodedRoom,
+        kind: "chat_message",
+        user: viewerName,
+        text,
+        bot: false,
+      }).catch(() => {});
+    }
     setInput("");
   };
 
   const sendReaction = (kind: ReactionKind) => {
-    const payload = textEncoder.encode(JSON.stringify({ type: "reaction", kind, user: viewerName }));
+    const payload = encodeRoomDataMessage({
+      type: "reaction",
+      kind,
+      user: viewerName,
+    });
     room.localParticipant.publishData(payload, { reliable: true });
     addReaction(kind);
+    if (aiAudienceEnabled) {
+      void mirrorAiAudienceContextEvent({
+        roomSlug: decodedRoom,
+        kind: "reaction",
+        user: viewerName,
+        reactionKind: kind,
+      }).catch(() => {});
+    }
   };
 
   const endStream = async () => {
@@ -595,12 +641,11 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
               <p className="text-xs text-text-secondary/40 text-center py-8">还没有消息，说点什么吧</p>
             )}
             {messages.map((msg) => (
-              <div key={msg.id} className="text-xs">
-                <span className="text-text-secondary/40 mr-1.5 text-[10px]">{formatTime(msg.time)}</span>
-                <span className="text-accent-cyan font-medium">{msg.user}</span>
-                <span className="text-text-secondary mx-1">:</span>
-                <span className="text-text-primary">{msg.text}</span>
-              </div>
+              <ChatMessageRow
+                key={msg.id}
+                message={msg}
+                timestampLabel={formatTime(msg.time)}
+              />
             ))}
           </div>
 
@@ -732,7 +777,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
                             : "border-border-pixel text-text-secondary hover:border-text-secondary"
                         }`}
                       >
-                        {t(s.labelKey as any)}
+                        {t(s.labelKey as TranslationKey)}
                       </button>
                     ))}
                   </div>
@@ -742,7 +787,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
                       {(() => {
                         const stageValue = streamInfo.stage || "构思中";
                         const match = STAGES_DATA.find(s => s.value === stageValue);
-                        return match ? t(match.labelKey as any) : stageValue;
+                        return match ? t(match.labelKey as TranslationKey) : stageValue;
                       })()}
                     </span>
                   </p>
@@ -864,6 +909,8 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
 // ── Watch Layout (handles desktop/mobile) ────
 function WatchLayout({
   layoutMode, onLayoutChange, mobilePanel, onMobilePanelChange, identity, roomName,
+  aiAudienceEnabled,
+  streamStartedAt,
 }: {
   layoutMode: LayoutMode;
   onLayoutChange: (m: LayoutMode) => void;
@@ -871,6 +918,8 @@ function WatchLayout({
   onMobilePanelChange: (p: "video" | "chat") => void;
   identity: string;
   roomName: string;
+  aiAudienceEnabled: boolean;
+  streamStartedAt: string | null;
 }) {
   const { t } = useI18n();
   const [desktop, setDesktop] = useState(false);
@@ -884,7 +933,14 @@ function WatchLayout({
   }, []);
 
   const videoProps = { bursts, showBanner, screenFlash };
-  const sidebarProps = { viewerName: identity, roomName, addReaction, combo };
+  const sidebarProps = {
+    viewerName: identity,
+    roomName,
+    addReaction,
+    combo,
+    aiAudienceEnabled,
+    streamStartedAt,
+  };
 
   if (desktop) {
     if (layoutMode === "theater") {
@@ -951,7 +1007,7 @@ export default function WatchPage({
   const { t } = useI18n();
   const { room: roomName } = use(params);
   const slug = decodeURIComponent(roomName).toLowerCase();
-  const { nickname: profileName } = useNickname();
+  const { nickname: profileName, userId } = useNickname();
   const [token, setToken] = useState<string | null>(null);
   const [identity, setIdentity] = useState("");
   const [joined, setJoined] = useState(false);
@@ -964,6 +1020,10 @@ export default function WatchPage({
   const [channelData, setChannelData] = useState<ChannelData | null | undefined>(undefined);
 
   const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+  const isOwnerSelfWatch =
+    !!userId && !!channelData && userId === channelData.channel.user_id;
+  const aiAudienceEnabled =
+    channelData?.channel.settings.ai_audience_enabled === true;
 
   // ─ 拉取频道 + 当前直播会话, 并轮询以便检测主播开播 ─
   useEffect(() => {
@@ -991,14 +1051,18 @@ export default function WatchPage({
   }, [slug]);
 
   const joinWithName = useCallback(async (name: string) => {
-    const viewerName = name.trim() || `观众${Math.floor(Math.random() * 9999)}`;
+    const rawViewerName = name.trim() || `观众${Math.floor(Math.random() * 9999)}`;
+    const viewerSession = resolveViewerIdentity(rawViewerName, {
+      isOwnerSelfWatch,
+      uniqueSuffix: Math.random().toString(36).slice(2, 6),
+    });
     try {
       const res = await fetch("/api/livekit/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           room: slug,
-          identity: viewerName,
+          identity: viewerSession.transportIdentity,
           isPublisher: false,
         }),
       });
@@ -1008,13 +1072,13 @@ export default function WatchPage({
       }
       const data = await res.json();
       setToken(data.token);
-      setIdentity(viewerName);
+      setIdentity(viewerSession.displayName);
       setJoined(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('error.joinFailed'));
       setLoading(false);
     }
-  }, [slug, t]);
+  }, [isOwnerSelfWatch, slug, t]);
 
   // 自动加入: 仅当频道存在且正在直播
   useEffect(() => {
@@ -1107,9 +1171,6 @@ export default function WatchPage({
     );
   }
 
-  // Watching
-  const isTheater = layoutMode === "theater";
-
   return (
     <div className="ambient-gradient h-screen flex flex-col" data-player-root>
       {/* Channel context bar (global Navbar already provides logo + nav) */}
@@ -1150,6 +1211,8 @@ export default function WatchPage({
           onMobilePanelChange={setMobilePanel}
           identity={identity}
           roomName={roomName}
+          aiAudienceEnabled={aiAudienceEnabled}
+          streamStartedAt={channelData.liveStream.started_at ?? null}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>

@@ -226,6 +226,12 @@ export const zh = {
   "goLive.chat.slowModeSeconds": "{n} 秒",
   "goLive.chat.followersOnly": "仅关注者可发言",
   "goLive.chat.followersOnlyComing": "关注功能即将上线",
+  "goLive.chat.aiAudience": "AI 观众",
+  "goLive.chat.aiAudienceHint": "这个直播间会加入 {n} 个带 bot 徽章的 AI 观众",
+  "goLive.chat.aiAudienceIntensity": "活跃度",
+  "goLive.chat.aiAudienceIntensity.low": "克制",
+  "goLive.chat.aiAudienceIntensity.medium": "平衡",
+  "goLive.chat.aiAudienceIntensity.high": "活跃",
 
   "goLive.saved": "✓ 已保存",
   "goLive.saving": "保存中...",

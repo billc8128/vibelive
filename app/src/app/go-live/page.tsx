@@ -40,6 +40,15 @@ import {
 } from "livekit-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  AI_AUDIENCE_DEFAULT_COUNT,
+  normalizeAiAudienceSettings,
+  type AiAudienceIntensity,
+} from "@/lib/ai-audience/settings";
+import {
+  capturePreviewScreenshot,
+} from "@/lib/ai-audience/screenshot";
+import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
 import { useNickname } from "@/lib/useNickname";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n/context";
@@ -115,6 +124,15 @@ const PLATFORM_OPTIONS = [
 ] as const;
 
 const SLOW_MODE_OPTIONS = [5, 10, 30, 60] as const;
+const AI_AUDIENCE_SCREENSHOT_INTERVAL_MS = 20_000;
+const AI_AUDIENCE_INTENSITY_OPTIONS: {
+  value: AiAudienceIntensity;
+  labelKey: TranslationKey;
+}[] = [
+  { value: "low", labelKey: "goLive.chat.aiAudienceIntensity.low" },
+  { value: "medium", labelKey: "goLive.chat.aiAudienceIntensity.medium" },
+  { value: "high", labelKey: "goLive.chat.aiAudienceIntensity.high" },
+];
 
 const SLUG_RE = /^[a-z0-9-]{3,20}$/;
 
@@ -137,7 +155,10 @@ type SettingsField =
   | "tags"
   | "slow_mode_enabled"
   | "slow_mode_seconds"
-  | "followers_only";
+  | "followers_only"
+  | "ai_audience_enabled"
+  | "ai_audience_count"
+  | "ai_audience_intensity";
 
 const SECTION_FIELDS: Record<
   SectionKey,
@@ -157,7 +178,14 @@ const SECTION_FIELDS: Record<
   },
   chat: {
     cols: [],
-    settings: ["slow_mode_enabled", "slow_mode_seconds", "followers_only"],
+    settings: [
+      "slow_mode_enabled",
+      "slow_mode_seconds",
+      "followers_only",
+      "ai_audience_enabled",
+      "ai_audience_count",
+      "ai_audience_intensity",
+    ],
   },
 };
 
@@ -168,6 +196,9 @@ interface ChannelSettings {
   slow_mode_enabled?: boolean;
   slow_mode_seconds?: number;
   followers_only?: boolean;
+  ai_audience_enabled?: boolean;
+  ai_audience_count?: number;
+  ai_audience_intensity?: AiAudienceIntensity;
 }
 
 interface Channel {
@@ -247,6 +278,9 @@ export default function GoLivePage() {
 }
 
 function normalizeChannel(raw: Record<string, unknown>): Channel {
+  const rawSettings = (raw.settings as Record<string, unknown>) || {};
+  const aiAudienceSettings = normalizeAiAudienceSettings(rawSettings);
+
   return {
     id: String(raw.id),
     user_id: String(raw.user_id),
@@ -259,7 +293,12 @@ function normalizeChannel(raw: Record<string, unknown>): Channel {
     project_url: String(raw.project_url || ""),
     coding_tool: String(raw.coding_tool || "cursor"),
     quality: String(raw.quality || "1080p"),
-    settings: (raw.settings as ChannelSettings) || {},
+    settings: {
+      ...(rawSettings as ChannelSettings),
+      ai_audience_enabled: aiAudienceSettings.enabled,
+      ai_audience_count: aiAudienceSettings.count,
+      ai_audience_intensity: aiAudienceSettings.intensity,
+    },
   };
 }
 
@@ -1238,6 +1277,39 @@ function Dashboard({
     }
   }, [bState]);
 
+  useEffect(() => {
+    const aiAudienceEnabled = !!savedChannel.settings.ai_audience_enabled;
+    if (bState !== "live" || !aiAudienceEnabled) {
+      return;
+    }
+
+    const captureAndMirror = () => {
+      const preview = previewVideoRef.current;
+      if (!preview) {
+        return;
+      }
+
+      const screenshot = capturePreviewScreenshot(preview);
+      if (!screenshot) {
+        return;
+      }
+
+      void mirrorAiAudienceContextEvent({
+        roomSlug: savedChannel.slug,
+        kind: "screenshot",
+        url: screenshot,
+        capturedAt: Date.now(),
+      }).catch(() => {});
+    };
+
+    captureAndMirror();
+    const interval = setInterval(
+      captureAndMirror,
+      AI_AUDIENCE_SCREENSHOT_INTERVAL_MS,
+    );
+    return () => clearInterval(interval);
+  }, [bState, savedChannel.settings.ai_audience_enabled, savedChannel.slug]);
+
   // ─ Start broadcast: publish tracks + insert live_streams row ─
   const startBroadcast = useCallback(async () => {
     if (!roomRef.current || !videoTrackRef.current) return;
@@ -1862,6 +1934,60 @@ function Dashboard({
                   <span className="text-[10px] text-text-secondary/40 italic">
                     {t("goLive.chat.followersOnlyComing")}
                   </span>
+                </div>
+              </Field>
+
+              <Field label={t("goLive.chat.aiAudience")}>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <ToggleButton
+                      enabled={!!draftChannel.settings.ai_audience_enabled}
+                      onChange={(v) =>
+                        patchDraft({ settings: { ai_audience_enabled: v } })
+                      }
+                    />
+                    <span className="text-[10px] text-text-secondary/60">
+                      {t("goLive.chat.aiAudienceHint").replace(
+                        "{n}",
+                        String(
+                          draftChannel.settings.ai_audience_count ||
+                            AI_AUDIENCE_DEFAULT_COUNT,
+                        ),
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <span className="block text-[10px] text-text-secondary/60">
+                      {t("goLive.chat.aiAudienceIntensity")}
+                    </span>
+                    <div className="flex gap-1.5">
+                      {AI_AUDIENCE_INTENSITY_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          disabled={!draftChannel.settings.ai_audience_enabled}
+                          onClick={() =>
+                            patchDraft({
+                              settings: { ai_audience_intensity: option.value },
+                            })
+                          }
+                          className={`flex-1 py-1.5 text-[8px] font-[family-name:var(--font-pixel)] border-2 transition-colors ${
+                            draftChannel.settings.ai_audience_intensity ===
+                            option.value
+                              ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
+                              : "border-border-pixel text-text-secondary hover:border-text-secondary"
+                          } ${
+                            !draftChannel.settings.ai_audience_enabled
+                              ? "opacity-40 cursor-not-allowed"
+                              : ""
+                          }`}
+                        >
+                          {t(option.labelKey)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </Field>
             </SettingsSection>
