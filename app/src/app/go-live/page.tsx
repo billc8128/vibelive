@@ -47,6 +47,7 @@ import {
 } from "@/lib/ai-audience/settings";
 import {
   capturePreviewScreenshot,
+  capturePreviewVideoClip,
 } from "@/lib/ai-audience/screenshot";
 import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
 import { useNickname } from "@/lib/useNickname";
@@ -125,6 +126,8 @@ const PLATFORM_OPTIONS = [
 
 const SLOW_MODE_OPTIONS = [5, 10, 30, 60] as const;
 const AI_AUDIENCE_SCREENSHOT_INTERVAL_MS = 20_000;
+const AI_AUDIENCE_VIDEO_CLIP_INTERVAL_MS = 60_000;
+const AI_AUDIENCE_VIDEO_CLIP_DURATION_MS = 2_000;
 const AI_AUDIENCE_INTENSITY_OPTIONS: {
   value: AiAudienceIntensity;
   labelKey: TranslationKey;
@@ -1283,6 +1286,9 @@ function Dashboard({
       return;
     }
 
+    let cancelled = false;
+    let videoCaptureRunning = false;
+
     const captureAndMirror = () => {
       const preview = previewVideoRef.current;
       if (!preview) {
@@ -1302,12 +1308,52 @@ function Dashboard({
       }).catch(() => {});
     };
 
+    const captureAndMirrorVideo = async () => {
+      if (videoCaptureRunning) {
+        return;
+      }
+
+      const preview = previewVideoRef.current;
+      if (!preview) {
+        return;
+      }
+
+      videoCaptureRunning = true;
+      try {
+        const clip = await capturePreviewVideoClip(preview, {
+          durationMs: AI_AUDIENCE_VIDEO_CLIP_DURATION_MS,
+        });
+        if (!clip || cancelled) {
+          return;
+        }
+
+        void mirrorAiAudienceContextEvent({
+          roomSlug: savedChannel.slug,
+          kind: "video_clip",
+          url: clip,
+          capturedAt: Date.now(),
+        }).catch(() => {});
+      } finally {
+        videoCaptureRunning = false;
+      }
+    };
+
     captureAndMirror();
     const interval = setInterval(
       captureAndMirror,
       AI_AUDIENCE_SCREENSHOT_INTERVAL_MS,
     );
-    return () => clearInterval(interval);
+    const videoStart = setTimeout(captureAndMirrorVideo, 5_000);
+    const videoInterval = setInterval(
+      captureAndMirrorVideo,
+      AI_AUDIENCE_VIDEO_CLIP_INTERVAL_MS,
+    );
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      clearTimeout(videoStart);
+      clearInterval(videoInterval);
+    };
   }, [bState, savedChannel.settings.ai_audience_enabled, savedChannel.slug]);
 
   // ─ Start broadcast: publish tracks + insert live_streams row ─

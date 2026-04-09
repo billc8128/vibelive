@@ -2,10 +2,15 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { capturePreviewScreenshot } from "./screenshot";
+import {
+  capturePreviewScreenshot,
+  capturePreviewVideoClip,
+} from "./screenshot";
 
 describe("capturePreviewScreenshot", () => {
   afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -53,5 +58,61 @@ describe("capturePreviewScreenshot", () => {
     Object.defineProperty(video, "videoHeight", { value: 0 });
 
     expect(capturePreviewScreenshot(video)).toBeNull();
+  });
+
+  it("records a short webm data URL from the preview element", async () => {
+    vi.useFakeTimers();
+
+    class FakeMediaRecorder {
+      static isTypeSupported = vi.fn().mockReturnValue(true);
+
+      state: RecordingState = "inactive";
+      mimeType = "video/webm";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void) | null = null;
+
+      start() {
+        this.state = "recording";
+      }
+
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({
+          data: new Blob(["clip"], { type: "video/webm" }),
+        } as BlobEvent);
+        this.onstop?.();
+      }
+    }
+
+    class FakeFileReader {
+      result: string | null = null;
+      onloadend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+
+      readAsDataURL() {
+        this.result = "data:video/webm;base64,Y2xpcA==";
+        this.onloadend?.();
+      }
+    }
+
+    vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+    vi.stubGlobal("FileReader", FakeFileReader);
+    const video = document.createElement("video");
+    Object.defineProperty(video, "captureStream", {
+      value: () => ({
+        getVideoTracks: () => [{ kind: "video" }],
+      }),
+    });
+
+    const promise = capturePreviewVideoClip(video, {
+      durationMs: 10,
+      mimeType: "video/webm",
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    const clip = await promise;
+
+    expect(clip).toMatch(/^data:video\/webm;base64,/);
+    expect(FakeMediaRecorder.isTypeSupported).toHaveBeenCalledWith("video/webm");
   });
 });

@@ -9,6 +9,12 @@ describe("OpenRouterModelClient", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
+          usage: {
+            prompt_tokens: 1200,
+            completion_tokens: 60,
+            total_tokens: 1260,
+            cost: 0.00078,
+          },
           choices: [
             {
               message: {
@@ -51,6 +57,12 @@ describe("OpenRouterModelClient", () => {
       text: "Would you split this into a smaller pass first?",
       target: "streamer",
       reason: "openrouter",
+      usage: {
+        prompt_tokens: 1200,
+        completion_tokens: 60,
+        total_tokens: 1260,
+        cost: 0.00078,
+      },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -106,6 +118,24 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[0]?.content).toContain(
       "When multiple angles are possible, prefer agent, tool, setup, platform, or project-stage questions before workflow-logic questions.",
     );
+    expect(body.messages[0]?.content).toContain(
+      "If you cannot clearly tell what the streamer is doing right now, hold.",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "When the streamer is reading external content, ask about the takeaway, relevance, or why they opened it",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "Do not make every message a question.",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "Mix questions with observations, evaluations, suggestions, and light hype",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "Avoid overfitting to exact on-screen terms",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "When the latest human chat is confused by or critical of recent bot messages",
+    );
   });
 
   it("uses screenshot summary instead of raw image input for chat generation", async () => {
@@ -151,6 +181,9 @@ describe("OpenRouterModelClient", () => {
         uiLanguage: "zh",
         primarySurface: "terminal",
         dominantSource: "agent_output",
+        contentContext: "streamer_workspace",
+        activityConfidence: "high",
+        streamerActivity: "主播在调试 AI audience 的语言问题",
         humanPromptSummary: "主播在要求 agent 调整 prompt",
         agentOutputSummary: "agent 在解释 runtime 改动",
         currentTaskSummary: "主播在调试 AI audience 的语言问题",
@@ -180,7 +213,101 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[1]?.content).toContain('"avoidTopics"');
     expect(body.messages[1]?.content).toContain('"suggestedAnglePolicy"');
     expect(body.messages[1]?.content).toContain('"suggestedAngleOrder"');
+    expect(body.messages[1]?.content).toContain('"understandingRequirement"');
+    expect(body.messages[1]?.content).toContain('"externalContentRule"');
+    expect(body.messages[1]?.content).toContain('"commentStyleMix"');
+    expect(body.messages[1]?.content).toContain('"overfitAvoidance"');
+    expect(body.messages[1]?.content).toContain('"exampleGoodComments"');
+    expect(body.messages[1]?.content).toContain('"humanFeedbackRecovery"');
     expect(body.messages[1]?.content).toContain('"latestScreenshotSummary"');
+  });
+
+  it("attaches a video clip as model input when video context is available", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '{"decision":"hold"}',
+              },
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    const client = new OpenRouterModelClient(
+      {
+        name: "google/gemini-3-flash-preview",
+        apiKey: "test-key",
+      },
+      fetchMock as typeof fetch,
+    );
+
+    const packet = buildContextPacket({
+      room: {
+        slug: "demo-room",
+        title: "Build an AI code stream",
+        stage: "coding",
+        codingTool: "cursor",
+      },
+      chatWindow: [],
+      latestScreenshotSummary: {
+        uiLanguage: "zh",
+        primarySurface: "terminal",
+        dominantSource: "agent_output",
+        contentContext: "streamer_workspace",
+        activityConfidence: "high",
+        streamerActivity: "主播在调试 AI audience 的语言问题",
+        humanPromptSummary: "主播在要求 agent 调整 prompt",
+        agentOutputSummary: "agent 在解释 runtime 改动",
+        currentTaskSummary: "主播在调试 AI audience 的语言问题",
+        suggestedAngles: ["为什么先动 prompt 不动 gate"],
+      },
+      latestVideoClip: {
+        url: "data:video/webm;base64,clip",
+        capturedAt: 1_744_163_200_000,
+      },
+    });
+
+    await client.decide(PERSONAS[0], packet);
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [
+      string,
+      RequestInit | undefined,
+    ];
+    const body = JSON.parse(String(requestInit?.body)) as {
+      model: string;
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const content = body.messages[1]?.content as Array<Record<string, unknown>>;
+    const textPart = content.find((part) => part.type === "text") as
+      | { type: "text"; text: string }
+      | undefined;
+    const promptPayload = JSON.parse(textPart?.text ?? "{}") as {
+      latestVideoClip?: unknown;
+    };
+
+    expect(body.model).toBe("google/gemini-3-flash-preview");
+    expect(content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "text" }),
+        expect.objectContaining({
+          type: "video_url",
+          videoUrl: { url: "data:video/webm;base64,clip" },
+        }),
+      ]),
+    );
+    expect(promptPayload.latestVideoClip).toEqual({
+      capturedAt: 1_744_163_200_000,
+      attached: true,
+    });
+    expect(textPart?.text).not.toContain("data:video/webm;base64,clip");
   });
 
   it("parses the first JSON object even when the model adds extra prose", async () => {

@@ -16,8 +16,14 @@ import {
   type ScreenshotSummarizer,
 } from "./screenshot-summarizer.js";
 import { TranscriptWindow } from "./transcript-window.js";
-import { readConfig } from "../config.js";
+import { readConfig, type OpenRouterModelConfig } from "../config.js";
 import type { AiAudienceIntensity } from "../types.js";
+import {
+  usageRecorder,
+  type OpenRouterUsage,
+  type UsageRecorder,
+  type UsageOperation,
+} from "./usage-recorder.js";
 
 interface RoomRuntimeDependencies {
   observer?: LiveKitObserver;
@@ -27,6 +33,7 @@ interface RoomRuntimeDependencies {
   mediaSnapshotter?: MediaSnapshotter;
   screenshotSummarizer?: ScreenshotSummarizer | null;
   transcriptWindow?: TranscriptWindow;
+  usageRecorder?: UsageRecorder;
   now?: () => number;
   random?: () => number;
 }
@@ -56,6 +63,8 @@ export class RoomRuntime {
   private readonly mediaSnapshotter: MediaSnapshotter;
   private readonly screenshotSummarizer: ScreenshotSummarizer | null;
   private readonly transcriptWindow: TranscriptWindow;
+  private readonly usageRecorder: UsageRecorder;
+  private readonly modelConfig: OpenRouterModelConfig | null;
   private readonly now: () => number;
   private readonly random: () => number;
   private personaCursor = 0;
@@ -73,9 +82,11 @@ export class RoomRuntime {
     this.agentRunner = deps.agentRunner ?? new AgentRunner();
     this.gate = deps.gate ?? new MessageGate();
     this.mediaSnapshotter = deps.mediaSnapshotter ?? new MediaSnapshotter();
+    this.modelConfig = readConfig().model;
     this.screenshotSummarizer =
-      deps.screenshotSummarizer ?? createScreenshotSummarizer(readConfig().model);
+      deps.screenshotSummarizer ?? createScreenshotSummarizer(this.modelConfig);
     this.transcriptWindow = deps.transcriptWindow ?? new TranscriptWindow();
+    this.usageRecorder = deps.usageRecorder ?? usageRecorder;
     this.now = deps.now ?? Date.now;
     this.random = deps.random ?? Math.random;
   }
@@ -136,10 +147,26 @@ export class RoomRuntime {
     );
     this.personaCursor = (startIndex + 1) % PERSONAS.length;
 
+    let heldCount = 0;
+    let gateRejectedCount = 0;
     for (const persona of orderedPersonas) {
       const decision = await this.agentRunner.decide(persona, packet);
-      if (decision.type !== "speak") continue;
-      if (!this.gate.accept(persona.key, decision.text, this.now())) continue;
+      this.recordUsage("agent_decide", decision.usage, {
+        personaKey: persona.key,
+        decision: decision.type,
+        hasScreenshot:
+          !!packet.latestScreenshot || !!packet.latestScreenshotSummary,
+        hasVideo: !!packet.latestVideoClip,
+      });
+      if (decision.type !== "speak") {
+        heldCount += 1;
+        continue;
+      }
+
+      if (!this.gate.accept(persona.key, decision.text, this.now())) {
+        gateRejectedCount += 1;
+        continue;
+      }
 
       await this.chatInjector.publish({
         user: persona.displayName,
@@ -153,6 +180,32 @@ export class RoomRuntime {
         bot: true,
       });
       break;
+    }
+
+    const humanChatCount = packet.chatWindow.filter((message) => !message.bot)
+      .length;
+    const botChatCount = packet.chatWindow.filter((message) => message.bot)
+      .length;
+    const hasContextToDebug =
+      humanChatCount > 0 ||
+      botChatCount > 0 ||
+      !!packet.latestScreenshot ||
+      !!packet.latestScreenshotSummary;
+
+    if (
+      heldCount + gateRejectedCount >= orderedPersonas.length &&
+      hasContextToDebug
+    ) {
+      console.info("ai audience tick skipped", {
+        roomSlug: this.roomSlug,
+        reason: gateRejectedCount > 0 ? "gate_rejected" : "all_agents_held",
+        humanChatCount,
+        botChatCount,
+        heldCount,
+        gateRejectedCount,
+        screenshotAttached: !!packet.latestScreenshot,
+        screenshotSummaryAttached: !!packet.latestScreenshotSummary,
+      });
     }
   }
 
@@ -177,6 +230,15 @@ export class RoomRuntime {
           try {
             const summary = await this.screenshotSummarizer.summarize(event.url);
             this.mediaSnapshotter.setLatestScreenshotSummary(summary);
+            this.recordUsage(
+              "screenshot_summary",
+              this.screenshotSummarizer.getLastUsage?.() ?? null,
+              {
+                decision: summary ? "summary" : "hold",
+                hasScreenshot: true,
+                hasVideo: false,
+              },
+            );
           } catch (error) {
             console.warn("screenshot summary failed", {
               roomSlug: this.roomSlug,
@@ -185,6 +247,12 @@ export class RoomRuntime {
             this.mediaSnapshotter.setLatestScreenshotSummary(null);
           }
         }
+        return;
+      case "video_clip":
+        this.mediaSnapshotter.setLatestVideoClip({
+          url: event.url,
+          capturedAt: event.capturedAt,
+        });
         return;
     }
   }
@@ -198,5 +266,41 @@ export class RoomRuntime {
 
   getChatInjector() {
     return this.chatInjector;
+  }
+
+  private recordUsage(
+    operation: UsageOperation,
+    usage: OpenRouterUsage | null | undefined,
+    metadata: {
+      personaKey?: string;
+      decision?: string;
+      hasScreenshot: boolean;
+      hasVideo: boolean;
+    },
+  ) {
+    if (!usage) {
+      return;
+    }
+
+    void Promise.resolve(
+      this.usageRecorder.record({
+        roomSlug: this.roomSlug,
+        channelId: this.payload.channelId,
+        operation,
+        personaKey: metadata.personaKey,
+        modelProvider: this.modelConfig?.provider ?? "unknown",
+        modelName: this.modelConfig?.name ?? "unknown",
+        decision: metadata.decision,
+        hasScreenshot: metadata.hasScreenshot,
+        hasVideo: metadata.hasVideo,
+        usage,
+      }),
+    ).catch((error) => {
+      console.warn("ai audience usage record failed", {
+        roomSlug: this.roomSlug,
+        operation,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 }

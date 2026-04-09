@@ -30,8 +30,15 @@ npm run dev
 
 - `POST /runtime/start`
 - `POST /runtime/stop`
+- `GET /runtime/usage`
 
 Both routes require the `x-orchestrator-secret` header.
+
+Usage/cost events are persisted to Supabase when `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are configured and the
+`app/supabase/008_ai_audience_usage.sql` migration has been applied. If the
+table is missing or Supabase is unavailable, the orchestrator falls back to
+in-memory usage data for the current process.
 
 ## Railway
 

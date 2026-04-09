@@ -1,4 +1,5 @@
 import type { OpenRouterModelConfig } from "../config.js";
+import type { OpenRouterUsage } from "./usage-recorder.js";
 
 export interface ScreenshotSummary {
   uiLanguage: "zh" | "en" | "mixed" | "unknown";
@@ -8,6 +9,14 @@ export interface ScreenshotSummary {
     | "agent_output"
     | "mixed"
     | "unknown";
+  contentContext:
+    | "streamer_workspace"
+    | "external_content"
+    | "dashboard_or_tooling"
+    | "mixed"
+    | "unknown";
+  activityConfidence: "high" | "medium" | "low";
+  streamerActivity: string;
   humanPromptSummary: string;
   agentOutputSummary: string;
   currentTaskSummary: string;
@@ -16,6 +25,7 @@ export interface ScreenshotSummary {
 
 export interface ScreenshotSummarizer {
   summarize(imageUrl: string): Promise<ScreenshotSummary | null>;
+  getLastUsage?(): OpenRouterUsage | null;
 }
 
 function stripJsonFences(raw: string) {
@@ -135,6 +145,22 @@ function normalizeSummary(
       input?.dominantSource === "mixed"
         ? input.dominantSource
         : "unknown",
+    contentContext:
+      input?.contentContext === "streamer_workspace" ||
+      input?.contentContext === "external_content" ||
+      input?.contentContext === "dashboard_or_tooling" ||
+      input?.contentContext === "mixed"
+        ? input.contentContext
+        : "unknown",
+    activityConfidence:
+      input?.activityConfidence === "high" ||
+      input?.activityConfidence === "medium"
+        ? input.activityConfidence
+        : "low",
+    streamerActivity:
+      typeof input?.streamerActivity === "string"
+        ? input.streamerActivity.trim()
+        : "",
     humanPromptSummary:
       typeof input?.humanPromptSummary === "string"
         ? input.humanPromptSummary.trim()
@@ -159,6 +185,7 @@ function normalizeSummary(
 
 export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
   private readonly apiUrl: string;
+  private lastUsage: OpenRouterUsage | null = null;
 
   constructor(
     private readonly config: Pick<
@@ -183,7 +210,7 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
       body: JSON.stringify({
         model: this.config.name,
         temperature: 0.1,
-        max_tokens: 220,
+        max_tokens: 600,
         messages: [
           {
             role: "system",
@@ -192,9 +219,12 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
               "Separate what the human streamer is asking from what the coding agent is outputting.",
               "Prefer concise semantic summaries over quoting screen text verbatim.",
               "Translate low-level hooks, logs, and bug text into higher-level viewer takeaways.",
+              "Identify what the streamer is doing with the content, not just what the content says.",
               "uiLanguage must be one of zh, en, mixed, unknown.",
               "primarySurface must be one of terminal, editor, browser, mixed, unknown.",
               "dominantSource must be one of human_prompt, agent_output, mixed, unknown.",
+              "contentContext must be one of streamer_workspace, external_content, dashboard_or_tooling, mixed, unknown.",
+              "activityConfidence must be one of high, medium, low.",
               "Keep summary fields short and plain. Do not include quoted UI labels, filenames, or markdown.",
               "Return one compact JSON object with no markdown fences and no explanatory prose.",
             ].join(" "),
@@ -211,6 +241,9 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
                     "uiLanguage",
                     "primarySurface",
                     "dominantSource",
+                    "contentContext",
+                    "activityConfidence",
+                    "streamerActivity",
                     "humanPromptSummary",
                     "agentOutputSummary",
                     "currentTaskSummary",
@@ -222,6 +255,12 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
                       "Use terminal, editor, browser, mixed, or unknown only.",
                     dominantSource:
                       "Use human_prompt when the streamer input is dominant, agent_output when the AI output is dominant, mixed when both matter, otherwise unknown.",
+                    contentContext:
+                      "Use external_content when the streamer is reading an article, docs, social content, or someone else's post. Use dashboard_or_tooling for admin panels and deployment dashboards. Use streamer_workspace for their own coding workspace.",
+                    activityConfidence:
+                      "Use high when the streamer's activity is clear, medium when partly clear, low when uncertain.",
+                    streamerActivity:
+                      "State in one short sentence what the streamer is doing right now, from a viewer point of view.",
                     humanPromptSummary:
                       "Paraphrase the human ask in one short sentence. Empty string if unclear.",
                     agentOutputSummary:
@@ -229,7 +268,7 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
                     currentTaskSummary:
                       "Describe what the streamer is trying to do right now in one short sentence at a viewer-friendly level.",
                     suggestedAngles:
-                      "Suggested angles should sound like public-chat questions about tools, workflow, project stage, platform choice, or current blocker. Avoid hook names, error strings, line numbers, and low-level implementation details.",
+                      "Suggested angles should support public-chat questions or comments about tools, workflow, project stage, platform choice, current blocker, or the stream vibe. Avoid hook names, error strings, line numbers, and low-level implementation details.",
                   },
                 }),
               },
@@ -255,6 +294,9 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
 
     const payload = (await response.json()) as unknown;
     const raw = extractMessageContent(payload);
+    this.lastUsage =
+      ((payload as { usage?: OpenRouterUsage })?.usage as OpenRouterUsage) ??
+      null;
 
     try {
       return normalizeSummary(
@@ -268,6 +310,10 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
         },
       );
     }
+  }
+
+  getLastUsage() {
+    return this.lastUsage;
   }
 }
 
