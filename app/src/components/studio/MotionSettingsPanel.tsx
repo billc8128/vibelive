@@ -5,6 +5,7 @@ import {
   studioConfig,
   STUDIO_CONFIG_DEFAULTS,
 } from "@/lib/broadcast/studio-config";
+import { FaceTrackerPreview } from "./FaceTrackerPreview";
 
 // ────────────────────────────────────────────────────────────────
 // 动捕设置面板 — slider 调头部 / 眼睛 / 身体 / 呼吸 灵敏度, 加 calibration
@@ -94,6 +95,7 @@ export function MotionSettingsPanel() {
   const [calibState, setCalibState] = useState<"idle" | "sampling" | "done">(
     "idle"
   );
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const reset = () => {
     setFaceScale(STUDIO_CONFIG_DEFAULTS.faceAngleScale);
@@ -133,29 +135,45 @@ export function MotionSettingsPanel() {
         </button>
       </div>
 
-      {/* Calibration — 显眼的大按钮, 用户做任何调节前先校准 */}
-      <button
-        type="button"
-        onClick={calibrate}
-        disabled={calibState === "sampling"}
-        className={`w-full pixel-border px-3 py-2 font-[family-name:var(--font-pixel)] text-[9px] uppercase tracking-wider transition-colors disabled:cursor-not-allowed ${
-          calibState === "sampling"
-            ? "bg-accent-yellow/20 text-accent-yellow"
+      {/* 两个 actions: 校准 + 追踪预览 */}
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={calibrate}
+          disabled={calibState === "sampling"}
+          className={`pixel-border px-2 py-2 font-[family-name:var(--font-pixel)] text-[8px] uppercase tracking-wider transition-colors disabled:cursor-not-allowed ${
+            calibState === "sampling"
+              ? "bg-accent-yellow/20 text-accent-yellow"
+              : calibState === "done"
+                ? "bg-accent-green/30 text-accent-green"
+                : "bg-accent-purple/15 text-accent-purple hover:bg-accent-purple/30"
+          }`}
+          title="保持自然正脸 + 自然睁眼 + 嘴闭, 点击采样 0.5 秒"
+        >
+          {calibState === "sampling"
+            ? "⏺ 采样中..."
             : calibState === "done"
-              ? "bg-accent-green/30 text-accent-green"
-              : "bg-accent-purple/15 text-accent-purple hover:bg-accent-purple/30"
-        }`}
-        title="保持自然正脸 + 自然睁眼 + 嘴闭, 点击采样 0.5 秒后成为基准"
-      >
-        {calibState === "sampling"
-          ? "⏺ 采样中... (保持不动 0.5 秒)"
-          : calibState === "done"
-            ? "✓ 已校准"
-            : "⊕ 校准 / Calibrate"}
-      </button>
+              ? "✓ 已校准"
+              : "⊕ 校准"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setPreviewOpen(true)}
+          className="pixel-border px-2 py-2 font-[family-name:var(--font-pixel)] text-[8px] uppercase tracking-wider bg-accent-cyan/15 text-accent-cyan hover:bg-accent-cyan/30 transition-colors"
+          title="打开 face mesh 实时预览, 看 MediaPipe 追踪到的 landmarks"
+        >
+          ◉ 追踪预览
+        </button>
+      </div>
       <p className="text-[9px] text-text-secondary/60 leading-relaxed -mt-1">
         保持自然正脸 + 自然睁眼 + 嘴闭, 点击后系统采样 30 帧 (~0.5 秒) 求平均.
       </p>
+
+      {/* Face mesh modal — 实时显示 478 个 landmarks */}
+      <FaceTrackerPreview
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+      />
 
       <Section title="头部" color="text-accent-cyan">
         <SliderRow

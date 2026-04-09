@@ -4,9 +4,26 @@ import {
   FaceLandmarker,
   FilesetResolver,
   type FaceLandmarkerResult,
+  type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
 import type { TrackingInputs } from "./vtube-config";
 import { studioConfig } from "./studio-config";
+
+/**
+ * Live snapshot — face tracker 每帧更新, UI (preview modal) 可以
+ * 直接读 faceTracker.snapshot 在 RAF 循环里画 landmarks.
+ *
+ * 不走 listener 是因为 preview 只在用户手动打开 modal 时存在,
+ * 用 polling 比 event subscription 更简单 (不需要 unsubscribe).
+ */
+export interface FaceTrackerSnapshot {
+  /** 478 个 face landmarks (含 iris), normalized [0,1] */
+  landmarks: NormalizedLandmark[];
+  /** 实时 FPS, 1 秒一次刷新 */
+  fps: number;
+  /** 是否检测到 face (landmarks.length > 0) */
+  hasDetection: boolean;
+}
 
 // ────────────────────────────────────────────────────────────────
 // Singleton MediaPipe FaceLandmarker → VTube Studio tracking inputs.
@@ -65,6 +82,20 @@ class FaceTrackerImpl {
   private calibSumRoll = 0;
   private calibSumBlendshapes: Record<string, number> = {};
   private static CALIB_FRAMES = 30; // ≈ 0.5 秒 @ 60fps
+  // Snapshot for preview UI (FPS + landmarks)
+  private _snapshot: FaceTrackerSnapshot = {
+    landmarks: [],
+    fps: 0,
+    hasDetection: false,
+  };
+  private fpsFrameCount = 0;
+  private fpsLastTime = 0;
+  private currentFps = 0;
+
+  /** UI preview 用 — 直接读 snapshot, RAF 循环里轮询. */
+  get snapshot(): FaceTrackerSnapshot {
+    return this._snapshot;
+  }
 
   get running(): boolean {
     return this._running;
@@ -193,12 +224,33 @@ class FaceTrackerImpl {
     if (this.video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
       try {
         const result = this.landmarker.detectForVideo(this.video, performance.now());
+
+        // FPS 计数 — 每秒一次更新 currentFps
+        this.fpsFrameCount++;
+        const fpsNow = performance.now();
+        if (fpsNow - this.fpsLastTime >= 1000) {
+          this.currentFps =
+            this.fpsLastTime === 0
+              ? 0
+              : Math.round((this.fpsFrameCount * 1000) / (fpsNow - this.fpsLastTime));
+          this.fpsFrameCount = 0;
+          this.fpsLastTime = fpsNow;
+        }
+
+        // 更新 snapshot 给 preview UI 用
+        this._snapshot = {
+          landmarks: result.faceLandmarks?.[0] ?? [],
+          fps: this.currentFps,
+          hasDetection: (result.faceLandmarks?.length ?? 0) > 0,
+        };
+
         if (!this.didLogFirstDetect) {
           this.didLogFirstDetect = true;
           console.log("[face-tracker] ✓ 首次 detect 返回", {
             hasMatrices: !!result.facialTransformationMatrixes?.length,
             hasBlendshapes: !!result.faceBlendshapes?.length,
             blendshapeCount: result.faceBlendshapes?.[0]?.categories?.length ?? 0,
+            landmarkCount: result.faceLandmarks?.[0]?.length ?? 0,
           });
         }
         const inputs = this.resultToInputs(result);
