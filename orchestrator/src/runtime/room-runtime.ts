@@ -20,8 +20,8 @@ import { readConfig, type OpenRouterModelConfig } from "../config.js";
 import type { AiAudienceIntensity } from "../types.js";
 import {
   usageRecorder,
-  type InMemoryUsageRecorder,
   type OpenRouterUsage,
+  type UsageRecorder,
   type UsageOperation,
 } from "./usage-recorder.js";
 
@@ -33,7 +33,7 @@ interface RoomRuntimeDependencies {
   mediaSnapshotter?: MediaSnapshotter;
   screenshotSummarizer?: ScreenshotSummarizer | null;
   transcriptWindow?: TranscriptWindow;
-  usageRecorder?: InMemoryUsageRecorder;
+  usageRecorder?: UsageRecorder;
   now?: () => number;
   random?: () => number;
 }
@@ -63,7 +63,7 @@ export class RoomRuntime {
   private readonly mediaSnapshotter: MediaSnapshotter;
   private readonly screenshotSummarizer: ScreenshotSummarizer | null;
   private readonly transcriptWindow: TranscriptWindow;
-  private readonly usageRecorder: InMemoryUsageRecorder;
+  private readonly usageRecorder: UsageRecorder;
   private readonly modelConfig: OpenRouterModelConfig | null;
   private readonly now: () => number;
   private readonly random: () => number;
@@ -282,17 +282,25 @@ export class RoomRuntime {
       return;
     }
 
-    this.usageRecorder.record({
-      roomSlug: this.roomSlug,
-      channelId: this.payload.channelId,
-      operation,
-      personaKey: metadata.personaKey,
-      modelProvider: this.modelConfig?.provider ?? "unknown",
-      modelName: this.modelConfig?.name ?? "unknown",
-      decision: metadata.decision,
-      hasScreenshot: metadata.hasScreenshot,
-      hasVideo: metadata.hasVideo,
-      usage,
+    void Promise.resolve(
+      this.usageRecorder.record({
+        roomSlug: this.roomSlug,
+        channelId: this.payload.channelId,
+        operation,
+        personaKey: metadata.personaKey,
+        modelProvider: this.modelConfig?.provider ?? "unknown",
+        modelName: this.modelConfig?.name ?? "unknown",
+        decision: metadata.decision,
+        hasScreenshot: metadata.hasScreenshot,
+        hasVideo: metadata.hasVideo,
+        usage,
+      }),
+    ).catch((error) => {
+      console.warn("ai audience usage record failed", {
+        roomSlug: this.roomSlug,
+        operation,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   }
 }

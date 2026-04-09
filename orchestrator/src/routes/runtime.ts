@@ -10,7 +10,7 @@ import { RoomManager } from "../runtime/room-manager.js";
 import { RoomRuntime } from "../runtime/room-runtime.js";
 import {
   usageRecorder,
-  type InMemoryUsageRecorder,
+  type UsageRecorder,
 } from "../runtime/usage-recorder.js";
 
 function authorizeRequest(
@@ -30,7 +30,7 @@ export function registerRuntimeRoutes(
   app: FastifyInstance,
   config: OrchestratorConfig,
   roomManager = new RoomManager(),
-  recorder: InMemoryUsageRecorder = usageRecorder,
+  recorder: UsageRecorder = usageRecorder,
 ) {
   app.get("/runtime/usage", async (request, reply) => {
     if (!authorizeRequest(request, reply, config)) return reply;
