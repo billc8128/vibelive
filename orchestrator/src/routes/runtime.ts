@@ -1,7 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import type { OrchestratorConfig } from "../config.js";
-import type { StartRuntimePayload, StopRuntimePayload } from "../types.js";
+import type {
+  RuntimeContextEvent,
+  StartRuntimePayload,
+  StopRuntimePayload,
+} from "../types.js";
 import { RoomManager } from "../runtime/room-manager.js";
 import { RoomRuntime } from "../runtime/room-runtime.js";
 
@@ -61,6 +65,32 @@ export function registerRuntimeRoutes(
       roomSlug: payload.roomSlug.trim(),
       stopped,
       runtimeCount: roomManager.count(),
+    };
+  });
+
+  app.post("/runtime/context", async (request, reply) => {
+    if (!authorizeRequest(request, reply, config)) return reply;
+
+    const payload = request.body as RuntimeContextEvent | undefined;
+    if (!payload?.roomSlug?.trim() || !payload.kind) {
+      return reply.code(400).send({ error: "invalid context event" });
+    }
+
+    const runtime = roomManager.get(payload.roomSlug.trim());
+    if (!runtime?.ingestContextEvent) {
+      return reply.code(404).send({ error: "runtime not found" });
+    }
+
+    await runtime.ingestContextEvent({
+      ...payload,
+      roomSlug: payload.roomSlug.trim(),
+    });
+
+    return {
+      ok: true,
+      action: "context",
+      roomSlug: payload.roomSlug.trim(),
+      kind: payload.kind,
     };
   });
 }

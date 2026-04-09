@@ -1,4 +1,8 @@
-import type { RuntimeSnapshot, StartRuntimePayload } from "../types.js";
+import type {
+  RuntimeContextEvent,
+  RuntimeSnapshot,
+  StartRuntimePayload,
+} from "../types.js";
 
 import { buildContextPacket } from "./context-packet.js";
 import { MessageGate } from "./message-gate.js";
@@ -7,7 +11,13 @@ import { ChatInjector } from "./chat-injector.js";
 import { LiveKitObserver } from "./livekit-observer.js";
 import { PERSONAS } from "./personas.js";
 import { MediaSnapshotter } from "./media-snapshotter.js";
+import {
+  createScreenshotSummarizer,
+  type ScreenshotSummarizer,
+} from "./screenshot-summarizer.js";
 import { TranscriptWindow } from "./transcript-window.js";
+import { readConfig } from "../config.js";
+import type { AiAudienceIntensity } from "../types.js";
 
 interface RoomRuntimeDependencies {
   observer?: LiveKitObserver;
@@ -15,9 +25,25 @@ interface RoomRuntimeDependencies {
   agentRunner?: AgentRunner;
   gate?: MessageGate;
   mediaSnapshotter?: MediaSnapshotter;
+  screenshotSummarizer?: ScreenshotSummarizer | null;
   transcriptWindow?: TranscriptWindow;
   now?: () => number;
-  tickIntervalMs?: number;
+  random?: () => number;
+}
+
+const TICK_DELAY_RANGES_MS: Record<AiAudienceIntensity, [number, number]> = {
+  low: [45_000, 90_000],
+  medium: [35_000, 75_000],
+  high: [25_000, 60_000],
+};
+
+export function pickTickDelayMs(
+  intensity: AiAudienceIntensity = "medium",
+  randomValue: number,
+) {
+  const [min, max] = TICK_DELAY_RANGES_MS[intensity] ?? TICK_DELAY_RANGES_MS.medium;
+  const clamped = Math.min(Math.max(randomValue, 0), 1);
+  return Math.round(min + (max - min) * clamped);
 }
 
 export class RoomRuntime {
@@ -28,10 +54,13 @@ export class RoomRuntime {
   private readonly agentRunner: AgentRunner;
   private readonly gate: MessageGate;
   private readonly mediaSnapshotter: MediaSnapshotter;
+  private readonly screenshotSummarizer: ScreenshotSummarizer | null;
   private readonly transcriptWindow: TranscriptWindow;
   private readonly now: () => number;
-  private readonly tickIntervalMs: number;
-  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly random: () => number;
+  private personaCursor = 0;
+  private tickTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
   constructor(
     readonly payload: StartRuntimePayload,
@@ -44,26 +73,44 @@ export class RoomRuntime {
     this.agentRunner = deps.agentRunner ?? new AgentRunner();
     this.gate = deps.gate ?? new MessageGate();
     this.mediaSnapshotter = deps.mediaSnapshotter ?? new MediaSnapshotter();
+    this.screenshotSummarizer =
+      deps.screenshotSummarizer ?? createScreenshotSummarizer(readConfig().model);
     this.transcriptWindow = deps.transcriptWindow ?? new TranscriptWindow();
     this.now = deps.now ?? Date.now;
-    this.tickIntervalMs = deps.tickIntervalMs ?? 15_000;
+    this.random = deps.random ?? Math.random;
   }
 
   async start() {
+    this.stopped = false;
     await this.observer.start();
     if (!this.tickTimer) {
-      this.tickTimer = setInterval(() => {
-        void this.tick();
-      }, this.tickIntervalMs);
+      this.scheduleNextTick();
     }
   }
 
   async stop() {
+    this.stopped = true;
     if (this.tickTimer) {
-      clearInterval(this.tickTimer);
+      clearTimeout(this.tickTimer);
       this.tickTimer = null;
     }
     await this.observer.stop();
+  }
+
+  private scheduleNextTick() {
+    const intensity = this.payload.aiAudience?.intensity ?? "medium";
+    const delay = pickTickDelayMs(intensity, this.random());
+    this.tickTimer = setTimeout(() => {
+      this.tickTimer = null;
+      void this.runScheduledTick();
+    }, delay);
+  }
+
+  private async runScheduledTick() {
+    await this.tick();
+    if (!this.stopped) {
+      this.scheduleNextTick();
+    }
   }
 
   async tick() {
@@ -79,10 +126,17 @@ export class RoomRuntime {
       reactionWindow: this.observer.getReactionWindow(),
       audioWindow: this.transcriptWindow.getRecent(),
       latestScreenshot: media.latestScreenshot,
+      latestScreenshotSummary: media.latestScreenshotSummary,
       latestVideoClip: media.latestVideoClip,
     });
 
-    for (const persona of PERSONAS) {
+    const startIndex = this.personaCursor;
+    const orderedPersonas = PERSONAS.slice(startIndex).concat(
+      PERSONAS.slice(0, startIndex),
+    );
+    this.personaCursor = (startIndex + 1) % PERSONAS.length;
+
+    for (const persona of orderedPersonas) {
       const decision = await this.agentRunner.decide(persona, packet);
       if (decision.type !== "speak") continue;
       if (!this.gate.accept(persona.key, decision.text, this.now())) continue;
@@ -93,7 +147,45 @@ export class RoomRuntime {
         bot: true,
         botPersona: persona.key,
       });
+      this.observer.observeChatMessage({
+        user: persona.displayName,
+        text: decision.text,
+        bot: true,
+      });
       break;
+    }
+  }
+
+  async ingestContextEvent(event: RuntimeContextEvent) {
+    switch (event.kind) {
+      case "chat_message":
+        this.observer.observeChatMessage({
+          user: event.user,
+          text: event.text,
+          bot: event.bot === true,
+        });
+        return;
+      case "reaction":
+        this.observer.observeReaction(event.reactionKind);
+        return;
+      case "screenshot":
+        this.mediaSnapshotter.setLatestScreenshot({
+          url: event.url,
+          capturedAt: event.capturedAt,
+        });
+        if (this.screenshotSummarizer) {
+          try {
+            const summary = await this.screenshotSummarizer.summarize(event.url);
+            this.mediaSnapshotter.setLatestScreenshotSummary(summary);
+          } catch (error) {
+            console.warn("screenshot summary failed", {
+              roomSlug: this.roomSlug,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            this.mediaSnapshotter.setLatestScreenshotSummary(null);
+          }
+        }
+        return;
     }
   }
 

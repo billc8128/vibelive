@@ -42,6 +42,10 @@ import {
   normalizeAiAudienceSettings,
   type AiAudienceIntensity,
 } from "@/lib/ai-audience/settings";
+import {
+  capturePreviewScreenshot,
+} from "@/lib/ai-audience/screenshot";
+import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
 import { useNickname } from "@/lib/useNickname";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n/context";
@@ -117,6 +121,7 @@ const PLATFORM_OPTIONS = [
 ] as const;
 
 const SLOW_MODE_OPTIONS = [5, 10, 30, 60] as const;
+const AI_AUDIENCE_SCREENSHOT_INTERVAL_MS = 20_000;
 const AI_AUDIENCE_INTENSITY_OPTIONS: {
   value: AiAudienceIntensity;
   labelKey: TranslationKey;
@@ -1002,6 +1007,39 @@ function Dashboard({
       videoTrackRef.current.attach(previewVideoRef.current);
     }
   }, [bState]);
+
+  useEffect(() => {
+    const aiAudienceEnabled = !!savedChannel.settings.ai_audience_enabled;
+    if (bState !== "live" || !aiAudienceEnabled) {
+      return;
+    }
+
+    const captureAndMirror = () => {
+      const preview = previewVideoRef.current;
+      if (!preview) {
+        return;
+      }
+
+      const screenshot = capturePreviewScreenshot(preview);
+      if (!screenshot) {
+        return;
+      }
+
+      void mirrorAiAudienceContextEvent({
+        roomSlug: savedChannel.slug,
+        kind: "screenshot",
+        url: screenshot,
+        capturedAt: Date.now(),
+      }).catch(() => {});
+    };
+
+    captureAndMirror();
+    const interval = setInterval(
+      captureAndMirror,
+      AI_AUDIENCE_SCREENSHOT_INTERVAL_MS,
+    );
+    return () => clearInterval(interval);
+  }, [bState, savedChannel.settings.ai_audience_enabled, savedChannel.slug]);
 
   // ─ Start broadcast: publish tracks + insert live_streams row ─
   const startBroadcast = useCallback(async () => {

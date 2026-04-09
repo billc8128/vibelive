@@ -1,4 +1,5 @@
 import { inferRoomLanguage } from "./language.js";
+import type { ScreenshotSummary } from "./screenshot-summarizer.js";
 
 export interface ContextRoom {
   slug: string;
@@ -29,6 +30,7 @@ export interface ContextPacket {
   reactionWindow: ReactionSummary[];
   audioWindow: string[];
   latestScreenshot: MediaCapture | null;
+  latestScreenshotSummary: ScreenshotSummary | null;
   latestVideoClip: MediaCapture | null;
   language: string;
 }
@@ -39,6 +41,7 @@ export interface ContextPacketInput {
   reactionWindow?: ReactionSummary[];
   audioWindow?: string[];
   latestScreenshot?: MediaCapture | null;
+  latestScreenshotSummary?: ScreenshotSummary | null;
   latestVideoClip?: MediaCapture | null;
 }
 
@@ -46,6 +49,7 @@ export function buildContextPacket(input: ContextPacketInput): ContextPacket {
   const reactionWindow = input.reactionWindow ?? [];
   const audioWindow = input.audioWindow ?? [];
   const latestScreenshot = input.latestScreenshot ?? null;
+  const latestScreenshotSummary = input.latestScreenshotSummary ?? null;
   const latestVideoClip = input.latestVideoClip ?? null;
 
   return {
@@ -54,11 +58,13 @@ export function buildContextPacket(input: ContextPacketInput): ContextPacket {
     reactionWindow,
     audioWindow,
     latestScreenshot,
+    latestScreenshotSummary,
     latestVideoClip,
     language: inferRoomLanguage({
       transcriptWindow: audioWindow,
       chatWindow: input.chatWindow,
       roomTitle: input.room.title,
+      screenshotLanguage: latestScreenshotSummary?.uiLanguage,
     }),
   };
 }

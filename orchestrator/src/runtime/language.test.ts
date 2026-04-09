@@ -12,4 +12,14 @@ describe("inferRoomLanguage", () => {
       }),
     ).toBe("en");
   });
+
+  it("does not force english when there is no language signal", () => {
+    expect(
+      inferRoomLanguage({
+        transcriptWindow: [],
+        chatWindow: [],
+        roomTitle: "",
+      }),
+    ).toBe("auto");
+  });
 });

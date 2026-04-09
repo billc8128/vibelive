@@ -13,6 +13,27 @@ export interface StopAiAudienceRuntimePayload {
   roomSlug: string;
 }
 
+export type AiAudienceContextEventPayload =
+  | {
+      roomSlug: string;
+      kind: "chat_message";
+      user: string;
+      text: string;
+      bot?: boolean;
+    }
+  | {
+      roomSlug: string;
+      kind: "reaction";
+      user: string;
+      reactionKind: string;
+    }
+  | {
+      roomSlug: string;
+      kind: "screenshot";
+      url: string;
+      capturedAt: number;
+    };
+
 export function buildSignedOrchestratorHeaders(secret: string) {
   return {
     "content-type": "application/json",
@@ -29,7 +50,10 @@ function buildRuntimeUrl(path: string): string | null {
 
 async function orchestratorRequest(
   path: string,
-  payload: StartAiAudienceRuntimePayload | StopAiAudienceRuntimePayload,
+  payload:
+    | StartAiAudienceRuntimePayload
+    | StopAiAudienceRuntimePayload
+    | AiAudienceContextEventPayload,
 ) {
   const url = buildRuntimeUrl(path);
   if (!url) return null;
@@ -53,4 +77,10 @@ export async function stopAiAudienceRuntime(
   payload: StopAiAudienceRuntimePayload,
 ) {
   return orchestratorRequest("/runtime/stop", payload);
+}
+
+export async function sendAiAudienceContextEvent(
+  payload: AiAudienceContextEventPayload,
+) {
+  return orchestratorRequest("/runtime/context", payload);
 }

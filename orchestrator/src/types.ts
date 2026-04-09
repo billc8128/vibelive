@@ -24,6 +24,33 @@ export interface RuntimeSnapshot {
   startedAt: number;
 }
 
+export interface ChatContextEvent {
+  kind: "chat_message";
+  roomSlug: string;
+  user: string;
+  text: string;
+  bot?: boolean;
+}
+
+export interface ReactionContextEvent {
+  kind: "reaction";
+  roomSlug: string;
+  reactionKind: string;
+  user: string;
+}
+
+export interface ScreenshotContextEvent {
+  kind: "screenshot";
+  roomSlug: string;
+  url: string;
+  capturedAt: number;
+}
+
+export type RuntimeContextEvent =
+  | ChatContextEvent
+  | ReactionContextEvent
+  | ScreenshotContextEvent;
+
 export interface BotChatMessage {
   user: string;
   text: string;
@@ -33,4 +60,5 @@ export interface BotChatMessage {
 
 export interface RoomRuntimeHandle {
   stop(): Promise<void> | void;
+  ingestContextEvent?(event: RuntimeContextEvent): Promise<void> | void;
 }

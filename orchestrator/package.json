@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "dotenv": "^17.2.3",
     "fastify": "^5.6.1",
     "livekit-server-sdk": "^2.15.0"
   },

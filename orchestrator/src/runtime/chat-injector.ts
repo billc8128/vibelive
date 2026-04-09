@@ -37,17 +37,24 @@ export class ChatInjector {
 
     if (!this.publisher) return;
 
-    await this.publisher.sendData(
-      this.roomSlug,
-      textEncoder.encode(
-        JSON.stringify({
-          type: "chat",
-          user: message.user,
-          text: message.text,
-          bot: message.bot === true,
-          botPersona: message.botPersona,
-        }),
-      ),
-    );
+    try {
+      await this.publisher.sendData(
+        this.roomSlug,
+        textEncoder.encode(
+          JSON.stringify({
+            type: "chat",
+            user: message.user,
+            text: message.text,
+            bot: message.bot === true,
+            botPersona: message.botPersona,
+          }),
+        ),
+      );
+    } catch (error) {
+      console.warn("chat injection failed", {
+        roomSlug: this.roomSlug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

@@ -2,6 +2,7 @@ interface LanguageInput {
   transcriptWindow: string[];
   chatWindow: Array<{ text: string }> | string[];
   roomTitle: string;
+  screenshotLanguage?: string | null;
 }
 
 const LATIN_RE = /[A-Za-z]/;
@@ -28,11 +29,15 @@ export function inferRoomLanguage(input: LanguageInput): string {
   const transcriptLanguage = pickLanguage(input.transcriptWindow);
   if (transcriptLanguage) return transcriptLanguage;
 
+  if (input.screenshotLanguage === "zh" || input.screenshotLanguage === "en") {
+    return input.screenshotLanguage;
+  }
+
   const chatTexts = input.chatWindow.map((entry) =>
     typeof entry === "string" ? entry : entry.text,
   );
   const chatLanguage = pickLanguage(chatTexts);
   if (chatLanguage) return chatLanguage;
 
-  return pickLanguage([input.roomTitle]) ?? "en";
+  return pickLanguage([input.roomTitle]) ?? "auto";
 }

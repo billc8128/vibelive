@@ -37,4 +37,36 @@ describe("buildContextPacket", () => {
       language: "en",
     });
   });
+
+  it("prefers screenshot summary language when transcript and chat are absent", () => {
+    expect(
+      buildContextPacket({
+        room: {
+          slug: "demo-room",
+          title: "",
+          stage: "coding",
+          codingTool: "cursor",
+        },
+        chatWindow: [],
+        latestScreenshot: {
+          url: "https://example.com/screen.png",
+          capturedAt: 1000,
+        },
+        latestScreenshotSummary: {
+          uiLanguage: "zh",
+          primarySurface: "editor",
+          dominantSource: "agent_output",
+          humanPromptSummary: "主播正在要求 agent 调整规则",
+          agentOutputSummary: "agent 正在解释 room runtime 调整",
+          currentTaskSummary: "主播在迭代 AI audience 行为",
+          suggestedAngles: ["为什么这么改 prompt"],
+        },
+      }),
+    ).toMatchObject({
+      language: "zh",
+      latestScreenshotSummary: {
+        uiLanguage: "zh",
+      },
+    });
+  });
 });

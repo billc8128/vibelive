@@ -20,13 +20,16 @@ import {
   parseRoomDataMessage,
   type ChatTimelineMessage,
 } from "@/lib/chat/protocol";
+import {
+  restoreChatTimeline,
+  serializeChatTimeline,
+} from "@/lib/chat/storage";
 import { useNickname } from "@/lib/useNickname";
 import { useI18n } from "@/lib/i18n/context";
 import type { TranslationKey } from "@/lib/i18n/zh";
-import {
-  AI_AUDIENCE_IDENTITY_PREFIX,
-  isViewerParticipant,
-} from "@/lib/participants";
+import { isViewerParticipant } from "@/lib/participants";
+import { resolveViewerIdentity } from "@/lib/livekit/viewerIdentity";
+import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
 import {
   ReactionOverlay,
   useReactionSystem,
@@ -364,11 +367,13 @@ const STAGES_DATA = [
   { value: "已完成", labelKey: "goLive.stage.done" },
 ];
 
-function Sidebar({ viewerName, roomName, addReaction, combo }: {
+function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, streamStartedAt }: {
   viewerName: string;
   roomName: string;
   addReaction: (kind: ReactionKind) => void;
   combo: ComboState;
+  aiAudienceEnabled: boolean;
+  streamStartedAt: string | null;
 }) {
   const { t } = useI18n();
   const room = useRoomContext();
@@ -377,18 +382,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
   const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
   const chatStorageKey = `vibelive-chat-${decodedRoom}`;
-  const [messages, setMessages] = useState<ChatTimelineMessage[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem(chatStorageKey);
-      if (!raw) return [];
-      const saved: ChatTimelineMessage[] = JSON.parse(raw);
-      const cutoff = Date.now() - CHAT_TTL_MS;
-      return saved.filter((m) => m.time > cutoff).slice(-200);
-    } catch {
-      return [];
-    }
-  });
+  const [messages, setMessages] = useState<ChatTimelineMessage[]>([]);
   const [input, setInput] = useState("");
   const [streamInfo, setStreamInfo] = useState<{
     project_name?: string; description?: string; stage?: string; streamer_name?: string; started_at?: string; user_id?: string;
@@ -492,12 +486,33 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
 
   // Persist messages to localStorage (keep only last 10 min)
   useEffect(() => {
-    const cutoff = Date.now() - CHAT_TTL_MS;
-    const fresh = messages.filter((m) => m.time > cutoff);
+    if (typeof window === "undefined") return;
     try {
-      localStorage.setItem(chatStorageKey, JSON.stringify(fresh.slice(-200)));
+      const raw = localStorage.getItem(chatStorageKey);
+      setMessages(
+        restoreChatTimeline({
+          raw,
+          sessionStartedAt: streamStartedAt,
+          ttlMs: CHAT_TTL_MS,
+        }).slice(-200),
+      );
+    } catch {
+      setMessages([]);
+    }
+  }, [chatStorageKey, streamStartedAt]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        chatStorageKey,
+        serializeChatTimeline({
+          messages: messages.slice(-200),
+          sessionStartedAt: streamStartedAt,
+          ttlMs: CHAT_TTL_MS,
+        }),
+      );
     } catch {}
-  }, [messages, chatStorageKey]);
+  }, [messages, chatStorageKey, streamStartedAt]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -516,6 +531,15 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
       ...prev.slice(-200),
       { id: `${Date.now()}-${Math.random()}`, user: viewerName, text, time: Date.now() },
     ]);
+    if (aiAudienceEnabled) {
+      void mirrorAiAudienceContextEvent({
+        roomSlug: decodedRoom,
+        kind: "chat_message",
+        user: viewerName,
+        text,
+        bot: false,
+      }).catch(() => {});
+    }
     setInput("");
   };
 
@@ -527,6 +551,14 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
     });
     room.localParticipant.publishData(payload, { reliable: true });
     addReaction(kind);
+    if (aiAudienceEnabled) {
+      void mirrorAiAudienceContextEvent({
+        roomSlug: decodedRoom,
+        kind: "reaction",
+        user: viewerName,
+        reactionKind: kind,
+      }).catch(() => {});
+    }
   };
 
   const endStream = async () => {
@@ -853,6 +885,8 @@ function Sidebar({ viewerName, roomName, addReaction, combo }: {
 // ── Watch Layout (handles desktop/mobile) ────
 function WatchLayout({
   layoutMode, onLayoutChange, mobilePanel, onMobilePanelChange, identity, roomName,
+  aiAudienceEnabled,
+  streamStartedAt,
 }: {
   layoutMode: LayoutMode;
   onLayoutChange: (m: LayoutMode) => void;
@@ -860,6 +894,8 @@ function WatchLayout({
   onMobilePanelChange: (p: "video" | "chat") => void;
   identity: string;
   roomName: string;
+  aiAudienceEnabled: boolean;
+  streamStartedAt: string | null;
 }) {
   const { t } = useI18n();
   const [desktop, setDesktop] = useState(false);
@@ -873,7 +909,14 @@ function WatchLayout({
   }, []);
 
   const videoProps = { bursts, showBanner, screenFlash };
-  const sidebarProps = { viewerName: identity, roomName, addReaction, combo };
+  const sidebarProps = {
+    viewerName: identity,
+    roomName,
+    addReaction,
+    combo,
+    aiAudienceEnabled,
+    streamStartedAt,
+  };
 
   if (desktop) {
     if (layoutMode === "theater") {
@@ -940,7 +983,7 @@ export default function WatchPage({
   const { t } = useI18n();
   const { room: roomName } = use(params);
   const slug = decodeURIComponent(roomName).toLowerCase();
-  const { nickname: profileName } = useNickname();
+  const { nickname: profileName, userId } = useNickname();
   const [token, setToken] = useState<string | null>(null);
   const [identity, setIdentity] = useState("");
   const [joined, setJoined] = useState(false);
@@ -953,6 +996,10 @@ export default function WatchPage({
   const [channelData, setChannelData] = useState<ChannelData | null | undefined>(undefined);
 
   const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL;
+  const isOwnerSelfWatch =
+    !!userId && !!channelData && userId === channelData.channel.user_id;
+  const aiAudienceEnabled =
+    channelData?.channel.settings.ai_audience_enabled === true;
 
   // ─ 拉取频道 + 当前直播会话, 并轮询以便检测主播开播 ─
   useEffect(() => {
@@ -981,16 +1028,17 @@ export default function WatchPage({
 
   const joinWithName = useCallback(async (name: string) => {
     const rawViewerName = name.trim() || `观众${Math.floor(Math.random() * 9999)}`;
-    const viewerName = rawViewerName.startsWith(AI_AUDIENCE_IDENTITY_PREFIX)
-      ? `viewer-${rawViewerName.slice(AI_AUDIENCE_IDENTITY_PREFIX.length) || Math.floor(Math.random() * 9999)}`
-      : rawViewerName;
+    const viewerSession = resolveViewerIdentity(rawViewerName, {
+      isOwnerSelfWatch,
+      uniqueSuffix: Math.random().toString(36).slice(2, 6),
+    });
     try {
       const res = await fetch("/api/livekit/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           room: slug,
-          identity: viewerName,
+          identity: viewerSession.transportIdentity,
           isPublisher: false,
         }),
       });
@@ -1000,13 +1048,13 @@ export default function WatchPage({
       }
       const data = await res.json();
       setToken(data.token);
-      setIdentity(viewerName);
+      setIdentity(viewerSession.displayName);
       setJoined(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('error.joinFailed'));
       setLoading(false);
     }
-  }, [slug, t]);
+  }, [isOwnerSelfWatch, slug, t]);
 
   // 自动加入: 仅当频道存在且正在直播
   useEffect(() => {
@@ -1139,6 +1187,8 @@ export default function WatchPage({
           onMobilePanelChange={setMobilePanel}
           identity={identity}
           roomName={roomName}
+          aiAudienceEnabled={aiAudienceEnabled}
+          streamStartedAt={channelData.liveStream.started_at ?? null}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
