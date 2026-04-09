@@ -44,6 +44,9 @@ class FaceTrackerImpl {
   // 一次性 log 标记 — 帮诊断 detect 是不是真的在跑 (用户报"摄像头亮但模型不动"用)
   private didLogFirstDetect = false;
   private didLogFirstBroadcast = false;
+  // 周期性 debug log: 每隔 N 帧打印一次完整矩阵 + 解出来的 yaw/pitch/roll,
+  // 帮用户在头部跟随出问题时直接看 console 数值. 60 帧 ≈ 1 秒.
+  private debugFrameCounter = 0;
 
   get running(): boolean {
     return this._running;
@@ -251,6 +254,32 @@ class FaceTrackerImpl {
     const yaw = Math.atan2(m02, m22);
     const roll = Math.atan2(m10, m11);
     const RAD2DEG = 180 / Math.PI;
+
+    // ── 周期性诊断 log ─────────────────────────────────────────
+    // 头部跟随 bug: 嘴能动头不能动 → 怀疑矩阵 layout 或 Euler order
+    // 错了. 每秒打一次完整 matrix + 两种 layout 假设下解出的 yaw/pitch/roll,
+    // 让用户在动头时看 console 对照实际行为, 直接定位问题.
+    this.debugFrameCounter++;
+    if (this.debugFrameCounter % 60 === 0) {
+      // Column-major 解读 (当前的假设)
+      const colYaw = Math.atan2(m[8], m[10]) * RAD2DEG;
+      const colPitch = Math.asin(-Math.max(-1, Math.min(1, m[9]))) * RAD2DEG;
+      const colRoll = Math.atan2(m[1], m[5]) * RAD2DEG;
+      // Row-major 解读 (替代假设)
+      const rowYaw = Math.atan2(m[2], m[10]) * RAD2DEG;
+      const rowPitch = Math.asin(-Math.max(-1, Math.min(1, m[6]))) * RAD2DEG;
+      const rowRoll = Math.atan2(m[4], m[5]) * RAD2DEG;
+      console.log("[face-tracker DEBUG]", {
+        matrix: [
+          [m[0]?.toFixed(2), m[1]?.toFixed(2), m[2]?.toFixed(2), m[3]?.toFixed(2)],
+          [m[4]?.toFixed(2), m[5]?.toFixed(2), m[6]?.toFixed(2), m[7]?.toFixed(2)],
+          [m[8]?.toFixed(2), m[9]?.toFixed(2), m[10]?.toFixed(2), m[11]?.toFixed(2)],
+          [m[12]?.toFixed(2), m[13]?.toFixed(2), m[14]?.toFixed(2), m[15]?.toFixed(2)],
+        ],
+        colMajor_YPR: [colYaw.toFixed(1), colPitch.toFixed(1), colRoll.toFixed(1)],
+        rowMajor_YPR: [rowYaw.toFixed(1), rowPitch.toFixed(1), rowRoll.toFixed(1)],
+      });
+    }
 
     // VTube Studio 习惯: 摄像头镜像 → 用户右转头, 模型也右转头.
     // MediaPipe 给的是非镜像坐标, yaw 方向跟 VTS 相反 → 取负.
