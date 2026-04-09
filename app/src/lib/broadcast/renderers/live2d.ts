@@ -125,6 +125,10 @@ export class Live2DRenderer implements SourceRenderer {
   private onHotkeysReady: ((hotkeys: VtubeHotkey[]) => void) | undefined;
   private _ready = false;
 
+  // 一次性 debug 标记 — 帮诊断面捕链路在哪一步断的, 各只 log 一次
+  private didLogFirstInputs = false;
+  private didLogFirstApply = false;
+
   constructor(opts: {
     modelUrl: string;
     vtubeConfigUrl?: string;
@@ -273,6 +277,13 @@ export class Live2DRenderer implements SourceRenderer {
 
         // 1) face tracking 先写
         if (this.applier && this.latestInputs) {
+          if (!this.didLogFirstApply) {
+            this.didLogFirstApply = true;
+            console.log(
+              "[live2d] ✓ 首次 applier.apply — face tracking 链路活了",
+              { sampleInputs: this.latestInputs }
+            );
+          }
           this.applier.apply(internal.coreModel, this.latestInputs);
         }
         // 2) expression 后写 → 表情参数覆盖追踪 (与 VTS 一致)
@@ -282,7 +293,7 @@ export class Live2DRenderer implements SourceRenderer {
       this.beforeUpdateHandler = handler;
 
       console.log(
-        `[live2d] vtube 配置就绪: ${config.mappings.length} mapping, ${config.hotkeys.length} hotkey`
+        `[live2d] vtube 配置就绪: ${config.mappings.length} mapping, ${config.hotkeys.length} hotkey, handler 已挂 beforeModelUpdate`
       );
 
       // 推送 hotkeys 给 React (UI 渲染按钮)
@@ -294,6 +305,14 @@ export class Live2DRenderer implements SourceRenderer {
 
   /** Compositor 把 face tracker 的最新 inputs 推过来. */
   onTrackingInputs(inputs: TrackingInputs): void {
+    if (!this.didLogFirstInputs) {
+      this.didLogFirstInputs = true;
+      console.log("[live2d] ✓ 首次收到 tracking inputs", {
+        applierExists: !!this.applier,
+        handlerRegistered: !!this.beforeUpdateHandler,
+        sampleKeys: Object.keys(inputs).slice(0, 5),
+      });
+    }
     this.latestInputs = inputs;
   }
 

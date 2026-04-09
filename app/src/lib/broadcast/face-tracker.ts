@@ -41,6 +41,9 @@ class FaceTrackerImpl {
   private starting: Promise<void> | null = null;
   private _running = false;
   private _error: Error | null = null;
+  // 一次性 log 标记 — 帮诊断 detect 是不是真的在跑 (用户报"摄像头亮但模型不动"用)
+  private didLogFirstDetect = false;
+  private didLogFirstBroadcast = false;
 
   get running(): boolean {
     return this._running;
@@ -164,8 +167,23 @@ class FaceTrackerImpl {
     if (this.video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
       try {
         const result = this.landmarker.detectForVideo(this.video, performance.now());
+        if (!this.didLogFirstDetect) {
+          this.didLogFirstDetect = true;
+          console.log("[face-tracker] ✓ 首次 detect 返回", {
+            hasMatrices: !!result.facialTransformationMatrixes?.length,
+            hasBlendshapes: !!result.faceBlendshapes?.length,
+            blendshapeCount: result.faceBlendshapes?.[0]?.categories?.length ?? 0,
+          });
+        }
         const inputs = this.resultToInputs(result);
         if (inputs) {
+          if (!this.didLogFirstBroadcast) {
+            this.didLogFirstBroadcast = true;
+            console.log("[face-tracker] ✓ 首次广播 inputs 给 listener", {
+              listenerCount: this.listeners.size,
+              inputs,
+            });
+          }
           this.listeners.forEach((fn) => {
             try { fn(inputs); } catch {}
           });
