@@ -19,6 +19,10 @@ export interface StudioConfig {
   eyeOpenScale: number;
   /** 眼球追踪 (look up/down/left/right) 灵敏度. 1.0 = 原始. */
   eyeBallScale: number;
+  /** 嘴巴开合灵敏度. 1.0 = 原始. */
+  mouthOpenScale: number;
+  /** 眉毛灵敏度. 1.0 = 原始. */
+  browScale: number;
   /** 身体跟随头部强度. 0 = 不跟, 1 = 跟头同步 (但通过 0.3x ratio 缩
    *  到合理 body 转动幅度). saba1B 默认 vtube.json mapping 可能 dummy,
    *  我们手动写 body 参数. */
@@ -42,6 +46,8 @@ export const STUDIO_CONFIG_DEFAULTS: StudioConfig = {
   faceAngleScale: 0.4,
   eyeOpenScale: 1.0,
   eyeBallScale: 1.0,
+  mouthOpenScale: 1.0,
+  browScale: 1.5,
   bodyFollowFactor: 0.5,
   breathEnabled: true,
   breathAmpY: 4,

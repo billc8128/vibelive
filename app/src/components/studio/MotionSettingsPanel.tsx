@@ -80,6 +80,10 @@ export function MotionSettingsPanel() {
   const [faceScale, setFaceScale] = useState(studioConfig.faceAngleScale);
   const [eyeOpenScale, setEyeOpenScale] = useState(studioConfig.eyeOpenScale);
   const [eyeBallScale, setEyeBallScale] = useState(studioConfig.eyeBallScale);
+  const [mouthOpenScale, setMouthOpenScale] = useState(
+    studioConfig.mouthOpenScale
+  );
+  const [browScale, setBrowScale] = useState(studioConfig.browScale);
   const [bodyFollow, setBodyFollow] = useState(studioConfig.bodyFollowFactor);
   const [breathEnabled, setBreathEnabled] = useState(
     studioConfig.breathEnabled
@@ -92,6 +96,8 @@ export function MotionSettingsPanel() {
     setFaceScale(STUDIO_CONFIG_DEFAULTS.faceAngleScale);
     setEyeOpenScale(STUDIO_CONFIG_DEFAULTS.eyeOpenScale);
     setEyeBallScale(STUDIO_CONFIG_DEFAULTS.eyeBallScale);
+    setMouthOpenScale(STUDIO_CONFIG_DEFAULTS.mouthOpenScale);
+    setBrowScale(STUDIO_CONFIG_DEFAULTS.browScale);
     setBodyFollow(STUDIO_CONFIG_DEFAULTS.bodyFollowFactor);
     setBreathEnabled(STUDIO_CONFIG_DEFAULTS.breathEnabled);
     setBreathAmp(STUDIO_CONFIG_DEFAULTS.breathAmpY);
@@ -174,6 +180,34 @@ export function MotionSettingsPanel() {
           onChange={(v) => {
             setEyeBallScale(v);
             studioConfig.eyeBallScale = v;
+          }}
+        />
+      </Section>
+
+      <Section title="嘴巴" color="text-accent-pink">
+        <SliderRow
+          label="开合灵敏度"
+          value={mouthOpenScale}
+          min={0.3}
+          max={3}
+          step={0.1}
+          onChange={(v) => {
+            setMouthOpenScale(v);
+            studioConfig.mouthOpenScale = v;
+          }}
+        />
+      </Section>
+
+      <Section title="眉毛" color="text-accent-orange">
+        <SliderRow
+          label="灵敏度"
+          value={browScale}
+          min={0.3}
+          max={5}
+          step={0.1}
+          onChange={(v) => {
+            setBrowScale(v);
+            studioConfig.browScale = v;
           }}
         />
       </Section>

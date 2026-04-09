@@ -54,8 +54,9 @@ class FaceTrackerImpl {
   private baseYaw = 0;
   private basePitch = 0;
   private baseRoll = 0;
-  private baseEyeBlinkLeft = 0;
-  private baseEyeBlinkRight = 0;
+  // 全 blendshapes baseline — eye blink/look, brow, mouth 都用这个减.
+  // 不同人光线 / 脸型, raw blendshape 在静态时也有非零基线.
+  private baseBlendshapes: Record<string, number> = {};
 
   get running(): boolean {
     return this._running;
@@ -265,23 +266,22 @@ class FaceTrackerImpl {
     const RAD2DEG = 180 / Math.PI;
 
     // ── Calibration baseline 检查 ─────────────────────────────────
-    // 如果用户点了校准按钮 (calibrationVersion 自增), 记录当前 raw 值
-    // 作为 "中性姿态" baseline. 后续输出 = raw - baseline, 让"自然正脸"
-    // 对应模型的"中性表情".
+    // 用户点"校准"按钮 (calibrationVersion 自增), 记录当前 raw 值作为
+    // "中性姿态" baseline. 后续输出 = raw - baseline.
     if (studioConfig.calibrationVersion !== this.lastCalibVersion) {
       this.lastCalibVersion = studioConfig.calibrationVersion;
       this.baseYaw = yaw;
       this.basePitch = pitch;
       this.baseRoll = roll;
-      // 同时记录眼睛 baseline (在下面 blendshapes 处理时用)
-      this.baseEyeBlinkLeft =
-        blendshapes[0].categories.find((c) => c.categoryName === "eyeBlinkLeft")
-          ?.score ?? 0;
-      this.baseEyeBlinkRight =
-        blendshapes[0].categories.find((c) => c.categoryName === "eyeBlinkRight")
-          ?.score ?? 0;
+      // 全部 blendshapes 都记 baseline — eye blink/look, brow, mouth 都
+      // 在静态时有非零基线, 校准能让"中性凝视"对应模型零位置.
+      this.baseBlendshapes = {};
+      for (const c of blendshapes[0].categories) {
+        if (c.categoryName)
+          this.baseBlendshapes[c.categoryName] = c.score;
+      }
       console.log(
-        `[face-tracker] ✓ 校准完成 baseline yaw=${(yaw * RAD2DEG).toFixed(1)}° pitch=${(pitch * RAD2DEG).toFixed(1)}° roll=${(roll * RAD2DEG).toFixed(1)}° eyeL=${this.baseEyeBlinkLeft.toFixed(2)} eyeR=${this.baseEyeBlinkRight.toFixed(2)}`
+        `[face-tracker] ✓ 校准完成 baseline yaw=${(yaw * RAD2DEG).toFixed(1)}° pitch=${(pitch * RAD2DEG).toFixed(1)}° roll=${(roll * RAD2DEG).toFixed(1)}° blendshapes=${Object.keys(this.baseBlendshapes).length}`
       );
     }
 
@@ -333,43 +333,52 @@ class FaceTrackerImpl {
       if (c.categoryName) bs[c.categoryName] = c.score;
     }
 
+    // baseline-relative helper — (raw - baseline), 校准过后中性 = 0
+    const rel = (name: string) =>
+      (bs[name] ?? 0) - (this.baseBlendshapes[name] ?? 0);
+    // dead-zone helper — 小于阈值的运动归零, 减少 MediaPipe blendshape
+    // 之间的 cross-talk (比如睁大眼睛会副作用地让 eyeLookUp 升高)
+    const dz = (v: number, threshold = 0.05) =>
+      Math.abs(v) < threshold ? 0 : v;
+
     // EyeOpen* — VTS 的 EyeOpenRight/Left 默认范围 [0, 0.5] (1.0 = 大睁眼).
     // saba1B 的 .vtube.json 用 InputRangeUpper=0.5 → 输出 1 (全开).
-    //
-    // 计算流程:
-    //   1. raw blink ∈ [0, 1], baseline 是用户校准时的 blink 值
-    //      (不同人光线 / 眼型的 baseline 不一样, 0.05-0.3 都正常)
-    //   2. 减 baseline 得到"相对闭眼度": 0 = 当前同 baseline, >0 = 比
-    //      baseline 闭得更多
-    //   3. 乘 eyeOpenScale (灵敏度): 大 → 微微一闭就完全闭, 小 → 需要
-    //      明显闭才闭
-    //   4. 1 - 这个值, 再 clamp [0, 1], 再 * 0.5 得到 VTS 输出范围 [0, 0.5]
-    const blinkLRel =
-      ((bs.eyeBlinkLeft ?? 0) - this.baseEyeBlinkLeft) *
-      studioConfig.eyeOpenScale;
-    const blinkRRel =
-      ((bs.eyeBlinkRight ?? 0) - this.baseEyeBlinkRight) *
-      studioConfig.eyeOpenScale;
+    //   1. raw - baseline = "相对闭眼度"
+    //   2. 乘 eyeOpenScale 调灵敏度
+    //   3. 1 - 它, clamp [0, 1], 再 * 0.5 得 VTS 输出范围 [0, 0.5]
+    const blinkLRel = rel("eyeBlinkLeft") * studioConfig.eyeOpenScale;
+    const blinkRRel = rel("eyeBlinkRight") * studioConfig.eyeOpenScale;
     const eyeOpenLeft = Math.max(0, Math.min(1, 1 - blinkLRel)) * 0.5;
     const eyeOpenRight = Math.max(0, Math.min(1, 1 - blinkRRel)) * 0.5;
 
-    // jawOpen → MouthOpen: 直接 0..1, 跟 VTS 一致
-    const jawOpen = bs.jawOpen ?? 0;
+    // 嘴 — jawOpen 乘 mouthOpenScale 调灵敏度
+    const jawOpen = (bs.jawOpen ?? 0) * studioConfig.mouthOpenScale;
 
-    // 微笑 — 取左右平均
-    const smile = ((bs.mouthSmileLeft ?? 0) + (bs.mouthSmileRight ?? 0)) / 2;
+    // 微笑 — 取左右平均, 也用 baseline 减
+    const smile = (rel("mouthSmileLeft") + rel("mouthSmileRight")) / 2;
 
-    // 视线 — 用 ARKit 的 eyeLookIn/Out 推近似 X. Y 用 Up/Down.
-    // saba1B 的视线 mapping 范围是 [-1, 1]. 用 eyeBallScale 调灵敏度.
+    // 视线 — 用 ARKit 的 eyeLookIn/Out 推近似 X, Y 用 Up/Down.
+    // 关键修复 (用户报"睁大眼睛眼球移动"): MediaPipe 的 eye blink 跟
+    // eye look blendshapes 有 cross-talk, 眼皮位置变化会副作用地影响
+    // look 判定. 用 baseline-relative + dead zone 双重抵消:
+    //   - rel(): 校准时的"中性凝视"对应零位置
+    //   - dz(): 小于 ~5% 的运动直接归零, 过滤噪声
     const ebs = studioConfig.eyeBallScale;
-    const eyeXLeft =
-      ((bs.eyeLookOutLeft ?? 0) - (bs.eyeLookInLeft ?? 0)) * ebs;
-    const eyeYLeft =
-      ((bs.eyeLookUpLeft ?? 0) - (bs.eyeLookDownLeft ?? 0)) * ebs;
-    const eyeXRight =
-      ((bs.eyeLookInRight ?? 0) - (bs.eyeLookOutRight ?? 0)) * ebs;
-    const eyeYRight =
-      ((bs.eyeLookUpRight ?? 0) - (bs.eyeLookDownRight ?? 0)) * ebs;
+    const eyeXLeft = dz(rel("eyeLookOutLeft") - rel("eyeLookInLeft")) * ebs;
+    const eyeYLeft = dz(rel("eyeLookUpLeft") - rel("eyeLookDownLeft")) * ebs;
+    const eyeXRight = dz(rel("eyeLookInRight") - rel("eyeLookOutRight")) * ebs;
+    const eyeYRight = dz(rel("eyeLookUpRight") - rel("eyeLookDownRight")) * ebs;
+
+    // 眉毛 — vtube.json 4 条 mapping (左右上下 + 形状) 都用单个 "Brows"
+    // input. VTS 约定中性 = 0.5, 0 = 眉毛全部下压, 1 = 全部上挑.
+    // 我们用 (browOuterUp 平均 - browDown 平均), 加 0.5 平移到 [0, 1] 区间,
+    // 再用 baseline + browScale 调.
+    const browUpAvg =
+      (rel("browOuterUpLeft") + rel("browOuterUpRight")) / 2;
+    const browDownAvg = (rel("browDownLeft") + rel("browDownRight")) / 2;
+    const browDelta = (browUpAvg - browDownAvg) * studioConfig.browScale;
+    // 0.5 是 VTS 中性, ±0.5 是边界. clamp [0, 1].
+    const brows = Math.max(0, Math.min(1, 0.5 + browDelta));
 
     return {
       // ── Head pose ──
@@ -390,6 +399,8 @@ class FaceTrackerImpl {
       MouthSmile: smile,
       VoiceFrequencyPlusMouthSmile: smile,
       MouthX: smile, // 部分模型用 MouthX 控制嘴角
+      // ── Brows — vtube.json 4 条 mapping 都用单个 "Brows" input ──
+      Brows: brows,
     };
   }
 }
