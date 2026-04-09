@@ -62,8 +62,15 @@ export async function archiveLiveStreamRow(
       peak_viewers: row.viewers_count || 0,
     });
     if (histErr) {
-      // history 写失败不阻塞删除 — 留 row 在 live_streams 比留两份脏数据更糟
-      console.warn("[archive] stream_history insert failed:", histErr.message);
+      // history 写失败 → 保留 live_streams row, 让下次 webhook/verify 重试.
+      // 之前的实现是"warn 然后继续删", 但那会让这次直播的历史记录永久丢失,
+      // 用户的累计时长 / 频道页"上次直播"摘要全部消失. 所有调用方
+      // (webhook / verify / DELETE /api/streams) 都是幂等的, 重试是安全的.
+      console.error(
+        "[archive] stream_history insert failed, NOT deleting row to allow retry:",
+        histErr.message
+      );
+      return { archived: false, reason: `history write failed: ${histErr.message}` };
     }
   }
 

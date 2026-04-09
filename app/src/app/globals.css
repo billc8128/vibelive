@@ -188,13 +188,43 @@ body {
 
 /* ── Reaction System ─────────────────────────── */
 
-/* Base rise: float up with horizontal wobble + glow trail */
+/* Base rise: every particle reads its own --rise-* CSS vars,
+   so each emoji follows a unique parabolic path with rotation. */
 @keyframes reaction-rise {
-  0% { opacity: 1; transform: translateY(0) translateX(0) scale(1); filter: blur(0); }
-  25% { opacity: 1; transform: translateY(-25%) translateX(8px) scale(1.15); }
-  50% { opacity: 0.8; transform: translateY(-50%) translateX(-6px) scale(1.25); }
-  75% { opacity: 0.4; transform: translateY(-75%) translateX(4px) scale(1.1); }
-  100% { opacity: 0; transform: translateY(-110%) translateX(0) scale(0.6); filter: blur(2px); }
+  0% {
+    opacity: 0;
+    transform:
+      translateX(0)
+      translateY(0)
+      rotate(var(--rise-rot-start, 0deg))
+      scale(calc(var(--rise-scale, 1) * 0.55));
+    filter: blur(0);
+  }
+  8% {
+    opacity: 1;
+    transform:
+      translateX(calc(var(--rise-drift, 0px) * 0.12))
+      translateY(-12%)
+      rotate(calc(var(--rise-rot-start, 0deg) + (var(--rise-rot-end, 0deg) - var(--rise-rot-start, 0deg)) * 0.08))
+      scale(calc(var(--rise-scale, 1) * 1.15));
+  }
+  55% {
+    opacity: 0.9;
+    transform:
+      translateX(calc(var(--rise-drift, 0px) * 0.65))
+      translateY(-58%)
+      rotate(calc(var(--rise-rot-start, 0deg) + (var(--rise-rot-end, 0deg) - var(--rise-rot-start, 0deg)) * 0.6))
+      scale(var(--rise-scale, 1));
+  }
+  100% {
+    opacity: 0;
+    transform:
+      translateX(var(--rise-drift, 0px))
+      translateY(-118%)
+      rotate(var(--rise-rot-end, 0deg))
+      scale(calc(var(--rise-scale, 1) * 0.5));
+    filter: blur(2px);
+  }
 }
 
 /* Tier 1+: pixel particle scatter */
@@ -251,18 +281,25 @@ body {
   z-index: 15;
 }
 
-/* Individual reaction particle */
+/* Individual reaction particle — duration is per-particle via --rise-duration */
 .reaction-particle {
   position: absolute;
   bottom: -10%;
   will-change: transform, opacity;
-  animation: reaction-rise 2.2s ease-out forwards;
-  text-shadow: 0 0 8px var(--reaction-glow, rgba(0,255,255,0.5));
-  font-size: 1.5rem;
+  animation: reaction-rise var(--rise-duration, 2200ms) cubic-bezier(0.16, 0.84, 0.44, 1) forwards;
+  text-shadow: 0 0 8px var(--reaction-glow, rgba(0,255,255,0.5)),
+               0 0 18px var(--reaction-glow, rgba(0,255,255,0.3));
+  font-size: 1.6rem;
 }
-.reaction-particle.tier-1 { font-size: 1.8rem; }
-.reaction-particle.tier-2 { font-size: 2.2rem; animation-duration: 2.5s; }
-.reaction-particle.tier-3 { font-size: 2.8rem; animation-duration: 2.8s; }
+.reaction-particle.tier-1 { font-size: 1.9rem; }
+.reaction-particle.tier-2 { font-size: 2.3rem; }
+.reaction-particle.tier-3 {
+  font-size: 2.9rem;
+  text-shadow:
+    0 0 12px var(--reaction-glow),
+    0 0 28px var(--reaction-glow),
+    0 0 52px var(--reaction-glow);
+}
 
 /* Pixel burst particles (tier 1+) */
 .reaction-burst {
@@ -291,6 +328,46 @@ body {
 /* Screen flash overlay (tier 3) */
 .screen-flash {
   animation: screen-flash 0.4s ease-out forwards;
+}
+
+/* Tier 3 video shake — scoped to video container, not whole page.
+   Translates only, no transform-origin tricks, so it doesn't fight LiveKit's video layout. */
+@keyframes video-shake {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  10% { transform: translate3d(-4px, 1px, 0); }
+  20% { transform: translate3d(3px, -3px, 0); }
+  30% { transform: translate3d(-2px, 2px, 0); }
+  40% { transform: translate3d(4px, 1px, 0); }
+  50% { transform: translate3d(-1px, -3px, 0); }
+  60% { transform: translate3d(3px, 2px, 0); }
+  70% { transform: translate3d(-3px, -1px, 0); }
+  80% { transform: translate3d(2px, 2px, 0); }
+  90% { transform: translate3d(-1px, -1px, 0); }
+}
+.video-shake { animation: video-shake 0.65s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+
+/* Click-time scatter — fires from the clicked button, scoped to viewport via fixed.
+   Works on mobile chat tab where the video overlay isn't visible. */
+@keyframes click-scatter {
+  0%   { opacity: 1; transform: translate(-50%, -50%) scale(0.6) rotate(0deg); }
+  20%  { opacity: 1; transform: translate(calc(-50% + var(--scatter-x, 0px) * 0.3), calc(-50% + var(--scatter-y, 0px) * 0.3)) scale(1.4) rotate(20deg); }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--scatter-x, 0px)),       calc(-50% + var(--scatter-y, 0px)))       scale(1.05) rotate(60deg); }
+}
+.click-scatter-particle {
+  position: fixed;
+  pointer-events: none;
+  z-index: 60;
+  font-size: 18px;
+  will-change: transform, opacity;
+  animation: click-scatter 720ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  text-shadow: 0 0 6px var(--scatter-glow, rgba(0,255,255,0.6)),
+               0 0 14px var(--scatter-glow, rgba(0,255,255,0.4));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video-shake { animation: none; }
+  .reaction-particle { animation-duration: 1.4s !important; }
+  .click-scatter-particle { animation-duration: 400ms !important; }
 }
 
 /* Button combo states */

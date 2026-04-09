@@ -22,4 +22,14 @@ describe("participants", () => {
       }),
     ).toBe(true);
   });
+
+  it("excludes hover-preview participants from viewer counts", () => {
+    // 首页 LiveStreamCard 的 hover 预览, 见 commit 0e7cd81
+    expect(
+      isViewerParticipant({
+        identity: "hover-room42-x9k2a8",
+        permissions: { canPublish: false },
+      }),
+    ).toBe(false);
+  });
 });

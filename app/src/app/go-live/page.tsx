@@ -27,7 +27,10 @@ import {
   Track,
   ScreenSharePresets,
   VideoPreset,
+  VideoPresets,
   createLocalScreenTracks,
+  createLocalVideoTrack,
+  createLocalAudioTrack,
   type LocalTrack,
   type LocalVideoTrack,
   type LocalAudioTrack,
@@ -512,11 +515,84 @@ function Dashboard({
   const roomRef = useRef<Room | null>(null);
   const videoTrackRef = useRef<LocalVideoTrack | null>(null);
   const audioTrackRef = useRef<LocalAudioTrack | null>(null);
+  // Camera 和 Microphone 是 ScreenShare 之外的可选 track, 用户可单独开关.
+  // ScreenShareAudio = 录系统/游戏声, Microphone = 录人声, 互不冲突可同时开.
+  const camTrackRef = useRef<LocalVideoTrack | null>(null);
+  const micTrackRef = useRef<LocalAudioTrack | null>(null);
+  const camPreviewRef = useRef<HTMLVideoElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   // 当前我们等待加入的 OBS 参与者身份 (= "obs-{slug}")
   const expectedObsIdentityRef = useRef<string | null>(null);
+
+  // ─ Camera / Microphone state ─
+  // enabled = 用户拨开关后的目标状态 (UI 即时反馈)
+  // 真正的 publish/unpublish 在 useEffect 里跑, 异步, 失败会回退 enabled
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [micEnabled, setMicEnabled] = useState(false);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [micBusy, setMicBusy] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [micError, setMicError] = useState("");
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [cameraDeviceId, setCameraDeviceId] = useState<string>("");
+  const [micDeviceId, setMicDeviceId] = useState<string>("");
+  // 记录"当前 track 是用哪个 deviceId 创建的", 配合 device-switch effect 防止
+  // 切换完成后效果再次触发陷入死循环 (effect dep [cameraDeviceId, cameraBusy]
+  // 在 busy 转 false 时会再跑一次).
+  const appliedCameraDeviceIdRef = useRef<string>("");
+  const appliedMicDeviceIdRef = useRef<string>("");
+
+  // 初始化时从 localStorage 拉上次选的设备 id (浏览器开关状态不持久, 隐私友好)
+  useEffect(() => {
+    try {
+      const savedCam = localStorage.getItem("vibelive-cam-device") || "";
+      const savedMic = localStorage.getItem("vibelive-mic-device") || "";
+      if (savedCam) setCameraDeviceId(savedCam);
+      if (savedMic) setMicDeviceId(savedMic);
+    } catch {}
+  }, []);
+
+  // 设备枚举: mount 后跑一次 + 监听 devicechange (插拔耳机/摄像头)
+  // 注意: 没拿过 getUserMedia 之前, label 字段会是空的 (浏览器隐私保护).
+  // 用户开过一次 cam/mic 后再次 enumerate 才能拿到设备名.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        if (cancelled) return;
+        setVideoDevices(all.filter((d) => d.kind === "videoinput"));
+        setAudioDevices(all.filter((d) => d.kind === "audioinput"));
+      } catch {}
+    };
+    refresh();
+    const onChange = () => refresh();
+    navigator.mediaDevices?.addEventListener?.("devicechange", onChange);
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices?.removeEventListener?.("devicechange", onChange);
+    };
+  }, []);
+
+  // 切换设备 id 时持久化
+  useEffect(() => {
+    if (cameraDeviceId) {
+      try {
+        localStorage.setItem("vibelive-cam-device", cameraDeviceId);
+      } catch {}
+    }
+  }, [cameraDeviceId]);
+  useEffect(() => {
+    if (micDeviceId) {
+      try {
+        localStorage.setItem("vibelive-mic-device", micDeviceId);
+      } catch {}
+    }
+  }, [micDeviceId]);
 
   // ─ Saved (服务端确认值) vs Draft (本地编辑值) ─
   // 字段编辑只改 draft, 不立即写库. 每个 section 用"推送更新"按钮显式提交.
@@ -564,7 +640,10 @@ function Dashboard({
     }, 1000);
   };
 
-  // ─ Cleanup tracks/room ─
+  // ─ Cleanup broadcast (screen + room) ─
+  // 注意: 故意不动 cam/mic. cam/mic 是独立设备, 横跨整个 dashboard 生命周期,
+  // 不应该被 "停止屏幕共享" 或 "房间断开" 这类事件意外关掉. 早期版本把它们绑在
+  // 一起, 结果用户开了摄像头, 几秒钟后 room 断线一次, cam/mic 就跟着挂了.
   const cleanupBroadcast = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -593,14 +672,204 @@ function Dashboard({
     setBState("idle");
   }, []);
 
+  // ─ Cleanup cam/mic (独立) ─
+  // 仅在组件 unmount 或用户显式 toggle off 时调用. cam/mic track 的 stop 由
+  // disableCamera / disableMic 负责; 这里只是个兜底, 卸载时把所有还活着的 track
+  // 都释放掉.
+  const cleanupCamMic = useCallback(() => {
+    if (camTrackRef.current) {
+      try {
+        camTrackRef.current.stop();
+      } catch {}
+      camTrackRef.current = null;
+    }
+    if (micTrackRef.current) {
+      try {
+        micTrackRef.current.stop();
+      } catch {}
+      micTrackRef.current = null;
+    }
+  }, []);
+
   // 卸载时清理 (注意: 不调用 DELETE /api/streams; 用户必须显式按"结束直播"。
   // 这对 OBS 模式尤其重要 — 关掉 dashboard 不应该停掉 OBS 推流)
   useEffect(() => {
     return () => {
       if (committedTimerRef.current) clearTimeout(committedTimerRef.current);
       cleanupBroadcast();
+      cleanupCamMic();
     };
-  }, [cleanupBroadcast]);
+  }, [cleanupBroadcast, cleanupCamMic]);
+
+  // ─ Camera lifecycle ─────────────────────────────────────────────
+  // create local video track → attach 到 dashboard 预览框 → 如果 room 已连
+  // 就 publish (这样直播中开 cam 立即对观众可见)
+  const enableCamera = useCallback(async () => {
+    setCameraError("");
+    setCameraBusy(true);
+    try {
+      const track = await createLocalVideoTrack({
+        deviceId: cameraDeviceId || undefined,
+        resolution: VideoPresets.h540.resolution, // 主播脸用 540p, 带宽友好
+      });
+      camTrackRef.current = track;
+      // 记下当前 track 用的 deviceId, device-switch effect 据此判断是否需要重启
+      appliedCameraDeviceIdRef.current = cameraDeviceId;
+      if (camPreviewRef.current) {
+        track.attach(camPreviewRef.current);
+      }
+      // 直播中已经有 room → 立即 publish, 观众马上看到
+      // (如果 room 不在, 这条 track 现在只是本地预览, startBroadcast 时再 publish)
+      if (roomRef.current && !track.sid) {
+        await roomRef.current.localParticipant.publishTrack(track, {
+          source: Track.Source.Camera,
+          simulcast: true,
+        });
+      }
+      // 用过 getUserMedia 后 device label 才有值, 重新 enumerate 一次
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setVideoDevices(all.filter((d) => d.kind === "videoinput"));
+      } catch {}
+      setCameraBusy(false);
+    } catch (e) {
+      setCameraError(e instanceof Error ? e.message : "无法启动摄像头");
+      setCameraEnabled(false);
+      setCameraBusy(false);
+    }
+  }, [cameraDeviceId]);
+
+  const disableCamera = useCallback(async () => {
+    setCameraBusy(true);
+    try {
+      if (camTrackRef.current) {
+        if (roomRef.current) {
+          try {
+            await roomRef.current.localParticipant.unpublishTrack(
+              camTrackRef.current,
+              true // stopOnUnpublish
+            );
+          } catch {}
+        } else {
+          try {
+            camTrackRef.current.stop();
+          } catch {}
+        }
+        camTrackRef.current = null;
+      }
+    } finally {
+      setCameraBusy(false);
+    }
+  }, []);
+
+  // ─ Microphone lifecycle ────────────────────────────────────────
+  const enableMic = useCallback(async () => {
+    setMicError("");
+    setMicBusy(true);
+    try {
+      const track = await createLocalAudioTrack({
+        deviceId: micDeviceId || undefined,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      });
+      micTrackRef.current = track;
+      // 记下当前 track 用的 deviceId, device-switch effect 据此判断是否需要重启
+      appliedMicDeviceIdRef.current = micDeviceId;
+      if (roomRef.current && !track.sid) {
+        await roomRef.current.localParticipant.publishTrack(track, {
+          source: Track.Source.Microphone,
+        });
+      }
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setAudioDevices(all.filter((d) => d.kind === "audioinput"));
+      } catch {}
+      setMicBusy(false);
+    } catch (e) {
+      setMicError(e instanceof Error ? e.message : "无法启动麦克风");
+      setMicEnabled(false);
+      setMicBusy(false);
+    }
+  }, [micDeviceId]);
+
+  const disableMic = useCallback(async () => {
+    setMicBusy(true);
+    try {
+      if (micTrackRef.current) {
+        if (roomRef.current) {
+          try {
+            await roomRef.current.localParticipant.unpublishTrack(
+              micTrackRef.current,
+              true
+            );
+          } catch {}
+        } else {
+          try {
+            micTrackRef.current.stop();
+          } catch {}
+        }
+        micTrackRef.current = null;
+      }
+    } finally {
+      setMicBusy(false);
+    }
+  }, []);
+
+  // ─ Cam/Mic 状态机 effect (单条) ─
+  // 把 "用户开关意图" + "当前设备 id" 协调到 "实际 LiveKit track" 上.
+  // 设计原理: 这是个收敛 effect, 每次状态变化跑一次, 只做一步动作 (要么 enable,
+  // 要么 disable), 然后 enable/disable 结束 (busy 清) 自然触发下一次 effect run,
+  // 直到状态收敛.
+  //
+  // 4 个动作分支:
+  //   1. 想开 + 没 track + 不忙              → enable
+  //   2. 想关 + 有 track + 不忙              → disable
+  //   3. 想开 + 有 track + 设备不匹配 + 不忙 → disable (下一轮 effect run 会 enable)
+  //   4. 忙                                  → 等下一次 dep 变化
+  //
+  // 这样切换设备自然分解成 "先 disable, 下一轮 enable", 避免了双重 enable
+  // 并发的 race. cameraBusy 也是 dep, 确保 busy 转 false 时重新评估.
+  useEffect(() => {
+    if (cameraBusy) return;
+    const haveTrack = !!camTrackRef.current;
+    const deviceMatches =
+      appliedCameraDeviceIdRef.current === cameraDeviceId;
+    if (cameraEnabled && !haveTrack) {
+      enableCamera();
+    } else if (!cameraEnabled && haveTrack) {
+      disableCamera();
+    } else if (cameraEnabled && haveTrack && !deviceMatches) {
+      // 切设备 — 先 disable, 等下一轮 effect run 用新 deviceId enable
+      disableCamera();
+    }
+  }, [
+    cameraEnabled,
+    cameraBusy,
+    cameraDeviceId,
+    enableCamera,
+    disableCamera,
+  ]);
+
+  useEffect(() => {
+    if (micBusy) return;
+    const haveTrack = !!micTrackRef.current;
+    const deviceMatches = appliedMicDeviceIdRef.current === micDeviceId;
+    if (micEnabled && !haveTrack) {
+      enableMic();
+    } else if (!micEnabled && haveTrack) {
+      disableMic();
+    } else if (micEnabled && haveTrack && !deviceMatches) {
+      disableMic();
+    }
+  }, [micEnabled, micBusy, micDeviceId, enableMic, disableMic]);
+
+  // camera track 创建后 attach 到预览 (preview 元素后挂载的情况兜底)
+  useEffect(() => {
+    if (cameraEnabled && camTrackRef.current && camPreviewRef.current) {
+      camTrackRef.current.attach(camPreviewRef.current);
+    }
+  }, [cameraEnabled, cameraBusy]);
 
   // ─ Section dirty 比较 + 单 section 提交 ─
   const isFieldEqual = (a: unknown, b: unknown): boolean => {
@@ -1116,6 +1385,26 @@ function Dashboard({
           { source: Track.Source.ScreenShareAudio }
         );
       }
+      // 用户在 preview 阶段就可能开了 cam/mic. 走两条路:
+      //   - 如果 enableCamera 那时 roomRef 已经存在 (用户先 pickScreenSource 再开 cam),
+      //     track 已经被 publish 过, .sid 已设置 → 跳过, 防止双 publish 替换原有发布
+      //   - 否则 (用户先开 cam 再 pickScreenSource), track 还没 publish, 这里补一下
+      if (camTrackRef.current && !camTrackRef.current.sid) {
+        try {
+          await roomRef.current.localParticipant.publishTrack(
+            camTrackRef.current,
+            { source: Track.Source.Camera, simulcast: true }
+          );
+        } catch {}
+      }
+      if (micTrackRef.current && !micTrackRef.current.sid) {
+        try {
+          await roomRef.current.localParticipant.publishTrack(
+            micTrackRef.current,
+            { source: Track.Source.Microphone }
+          );
+        } catch {}
+      }
 
       // 注册到数据库
       const res = await fetch("/api/streams", { method: "POST" });
@@ -1395,6 +1684,28 @@ function Dashboard({
                   {t("goLive.streamInfo.dirtyWarning")}
                 </div>
               )}
+
+            {/* Camera & Mic — 浏览器模式专属, 实时设备控制. 放在预览框下面是因为
+                这是直播画面的延伸 (主播脸 + 声音), 跟设置项 (右栏) 性质完全不同. */}
+            {mode === "browser" && (
+              <CameraMicPanel
+                cameraEnabled={cameraEnabled}
+                onCameraToggle={setCameraEnabled}
+                cameraBusy={cameraBusy}
+                cameraError={cameraError}
+                cameraDeviceId={cameraDeviceId}
+                onCameraDeviceChange={setCameraDeviceId}
+                videoDevices={videoDevices}
+                camPreviewRef={camPreviewRef}
+                micEnabled={micEnabled}
+                onMicToggle={setMicEnabled}
+                micBusy={micBusy}
+                micError={micError}
+                micDeviceId={micDeviceId}
+                onMicDeviceChange={setMicDeviceId}
+                audioDevices={audioDevices}
+              />
+            )}
 
             {/* OBS panel (URL + key + steps) */}
             {mode === "obs" && (
@@ -1836,6 +2147,163 @@ function ToggleButton({
         }`}
       />
     </button>
+  );
+}
+
+// ─── Camera & Mic Panel ────────────────────────────────────────────
+// 实时设备控制面板, 不走 commit 流程 (它控制的是 LiveKit track 实例,
+// 不是数据库字段). 浏览器模式专属 — OBS 模式由 OBS 自己管音视频.
+function CameraMicPanel({
+  cameraEnabled,
+  onCameraToggle,
+  cameraBusy,
+  cameraError,
+  cameraDeviceId,
+  onCameraDeviceChange,
+  videoDevices,
+  camPreviewRef,
+  micEnabled,
+  onMicToggle,
+  micBusy,
+  micError,
+  micDeviceId,
+  onMicDeviceChange,
+  audioDevices,
+}: {
+  cameraEnabled: boolean;
+  onCameraToggle: (v: boolean) => void;
+  cameraBusy: boolean;
+  cameraError: string;
+  cameraDeviceId: string;
+  onCameraDeviceChange: (id: string) => void;
+  videoDevices: MediaDeviceInfo[];
+  camPreviewRef: React.RefObject<HTMLVideoElement | null>;
+  micEnabled: boolean;
+  onMicToggle: (v: boolean) => void;
+  micBusy: boolean;
+  micError: string;
+  micDeviceId: string;
+  onMicDeviceChange: (id: string) => void;
+  audioDevices: MediaDeviceInfo[];
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="pixel-border bg-bg-card p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-yellow">
+          ◈
+        </span>
+        <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
+          {t("goLive.section.camMic")}
+        </span>
+        <div className="flex-1" />
+        <span className="text-[9px] text-text-secondary/50">
+          {t("goLive.camMic.live")}
+        </span>
+      </div>
+
+      {/* 横向布局: 左 = 摄像头小预览, 右 = 摄像头/麦克风控件 */}
+      <div className="flex gap-3 items-start">
+        {/* 摄像头本地预览 (小窗) — 始终挂载以便 attach, opacity 控制显隐 */}
+        <div
+          className={`shrink-0 w-[200px] aspect-video bg-bg-primary border border-border-pixel overflow-hidden transition-opacity ${
+            cameraEnabled && !cameraError ? "opacity-100" : "opacity-30"
+          }`}
+        >
+          <video
+            ref={camPreviewRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full h-full object-cover"
+          />
+        </div>
+
+        {/* 控件区 — 摄像头 + 麦克风分两块 */}
+        <div className="flex-1 min-w-0 space-y-3">
+          {/* Camera row */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <ToggleButton
+                enabled={cameraEnabled}
+                disabled={cameraBusy}
+                onChange={onCameraToggle}
+              />
+              <span className="text-xs text-text-primary">
+                {t("goLive.camMic.camera")}
+              </span>
+              {cameraBusy && (
+                <span className="text-[10px] text-accent-yellow animate-pulse">
+                  {t("goLive.camMic.starting")}
+                </span>
+              )}
+            </div>
+            {/* device picker — 仅当用户开过摄像头(label 才有值)且设备数 ≥ 1 时显示 */}
+            {videoDevices.length > 0 && (
+              <select
+                value={cameraDeviceId}
+                disabled={cameraBusy}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  onCameraDeviceChange(e.target.value)
+                }
+                className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary disabled:opacity-40 focus:border-accent-yellow focus:outline-none"
+              >
+                <option value="">{t("goLive.camMic.defaultDevice")}</option>
+                {videoDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label ||
+                      `${t("goLive.camMic.camera")} ${d.deviceId.slice(0, 6)}`}
+                  </option>
+                ))}
+              </select>
+            )}
+            {cameraError && (
+              <p className="text-[10px] text-accent-pink">⚠ {cameraError}</p>
+            )}
+          </div>
+
+          {/* Mic row */}
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <ToggleButton
+                enabled={micEnabled}
+                disabled={micBusy}
+                onChange={onMicToggle}
+              />
+              <span className="text-xs text-text-primary">
+                {t("goLive.camMic.microphone")}
+              </span>
+              {micBusy && (
+                <span className="text-[10px] text-accent-yellow animate-pulse">
+                  {t("goLive.camMic.starting")}
+                </span>
+              )}
+            </div>
+            {audioDevices.length > 0 && (
+              <select
+                value={micDeviceId}
+                disabled={micBusy}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                  onMicDeviceChange(e.target.value)
+                }
+                className="w-full bg-bg-primary border border-border-pixel px-2 py-1 text-xs text-text-primary disabled:opacity-40 focus:border-accent-yellow focus:outline-none"
+              >
+                <option value="">{t("goLive.camMic.defaultDevice")}</option>
+                {audioDevices.map((d) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label ||
+                      `${t("goLive.camMic.microphone")} ${d.deviceId.slice(0, 6)}`}
+                  </option>
+                ))}
+              </select>
+            )}
+            {micError && (
+              <p className="text-[10px] text-accent-pink">⚠ {micError}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

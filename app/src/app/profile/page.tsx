@@ -39,6 +39,9 @@ interface StreamEntry {
   thumbnail_url: string;
   started_at: string;
   ended_at: string | null;
+  // Postgres generated column (007_channels_and_history.sql:90):
+  // greatest(0, extract(epoch from (ended_at - started_at))::int)
+  duration_seconds?: number;
 }
 
 interface Profile {
@@ -119,6 +122,22 @@ export default function ProfilePage() {
   const avatarUrl = profile?.avatar_url;
   const joinDate = profile?.created_at ? new Date(profile.created_at).toLocaleDateString("zh-CN") : "";
 
+  // 累计直播时长 — 历史 (stream_history) 所有已结束会话之和。
+  // 不包含当前 LIVE 中的会话 (那条在 live_streams, 不在 history endpoint)。
+  // 直接复用 Postgres 的 generated column duration_seconds, 避免前端重算 —
+  // 单一数据源, 永远跟 row 一致。
+  const totalStreamSeconds = streams.reduce(
+    (acc, s) => acc + (s.duration_seconds ?? 0),
+    0
+  );
+
+  const formatTotalTime = (sec: number) => {
+    if (sec < 60) return t('time.minutes', { m: 0 });
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return h > 0 ? t('time.hoursMinutes', { h, m }) : t('time.minutes', { m });
+  };
+
   return (
     <div className="ambient-gradient min-h-screen">
       <div className="mx-auto max-w-5xl px-4 py-6">
@@ -160,13 +179,20 @@ export default function ProfilePage() {
 
               {/* Stats */}
               <div className="grid grid-cols-2 gap-3 shrink-0">
-                {[
-                  { label: t('profile.tab.streams'), value: streams.length, color: "text-accent-green" },
-                  { label: t('profile.following'), value: follows.length, color: "text-accent-pink" },
-                  { label: t('profile.followers'), value: followers.length, color: "text-accent-cyan" },
-                  { label: t('profile.tab.favorites'), value: favorites.length, color: "text-accent-yellow" },
-                ].map((stat) => (
-                  <div key={stat.label} className="pixel-border bg-bg-primary/50 p-2 text-center min-w-[80px]">
+                {([
+                  { label: t('profile.tab.streams'), value: streams.length, color: "text-accent-green", span: false },
+                  { label: t('profile.following'), value: follows.length, color: "text-accent-pink", span: false },
+                  { label: t('profile.followers'), value: followers.length, color: "text-accent-cyan", span: false },
+                  { label: t('profile.tab.favorites'), value: favorites.length, color: "text-accent-yellow", span: false },
+                  // 第 5 个 stat: 累计直播时长 — 跨 2 列, 视觉上独立成行突出
+                  { label: t('profile.totalStreamTime'), value: formatTotalTime(totalStreamSeconds), color: "text-accent-purple", span: true },
+                ] as { label: string; value: number | string; color: string; span: boolean }[]).map((stat) => (
+                  <div
+                    key={stat.label}
+                    className={`pixel-border bg-bg-primary/50 p-2 text-center min-w-[80px] ${
+                      stat.span ? "col-span-2" : ""
+                    }`}
+                  >
                     <p className={`font-[family-name:var(--font-pixel)] text-sm ${stat.color}`}>
                       {stat.value}
                     </p>

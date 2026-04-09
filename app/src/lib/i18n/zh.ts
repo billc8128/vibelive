@@ -114,6 +114,8 @@ export const zh = {
   "reaction.want_to_use": "想用",
   "reaction.interesting": "有趣",
   "reaction.looking_forward": "期待",
+  "reaction.mind_blown": "炸裂",
+  "reaction.big_brain": "高手",
 
   // ── Profile Page ──────────────────────────
   "profile.tab.streams": "我的直播",
@@ -128,6 +130,7 @@ export const zh = {
   "profile.unknownUser": "未知用户",
   "profile.followers": "粉丝",
   "profile.following": "关注",
+  "profile.totalStreamTime": "累计直播时长",
 
   // ── Achievements ──────────────────────────
   "achievement.first_watch.name": "初见",
@@ -191,6 +194,12 @@ export const zh = {
   "goLive.section.tech": "技术设置",
   "goLive.section.chat": "聊天 / 互动",
   "goLive.section.preview": "预览",
+  "goLive.section.camMic": "摄像头 / 麦克风",
+  "goLive.camMic.live": "实时控制",
+  "goLive.camMic.camera": "摄像头",
+  "goLive.camMic.microphone": "麦克风",
+  "goLive.camMic.starting": "启动中...",
+  "goLive.camMic.defaultDevice": "默认设备",
 
   "goLive.streamTitle": "直播标题",
   "goLive.streamTitleRequired": "直播标题（必填）",

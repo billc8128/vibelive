@@ -276,12 +276,14 @@ function VideoArea({
   bursts,
   showBanner,
   screenFlash,
+  screenShake,
 }: {
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
   bursts: OverlayBurst[];
   showBanner: { icon: string; count: number; color: string } | null;
   screenFlash: boolean;
+  screenShake: boolean;
 }) {
   // OBS via Ingress 推上来的 track 源是 Camera, 不是 ScreenShare.
   // 同时订阅两类源, 优先选浏览器模式的 ScreenShare, fallback 到 OBS 的 Camera.
@@ -295,12 +297,22 @@ function VideoArea({
     { onlySubscribed: true }
   );
   const participants = useParticipants();
+  // isViewerParticipant 排除主播/OBS ingress (canPublish), AI audience bot
+  // (ai-audience: 前缀), 以及首页 hover 卡片的临时连接 (hover- 前缀, commit 0e7cd81).
   const viewerCount = participants.filter(isViewerParticipant).length;
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  const screenTrack =
-    tracks.find((tr) => tr.source === Track.Source.ScreenShare) ||
-    tracks.find((tr) => tr.source === Track.Source.Camera);
+  // 主画面: 优先 ScreenShare, 没有再退到 Camera (OBS 模式)
+  // 主播脸 (PiP): 仅当 ScreenShare 是主画面时, Camera 作为右下角小窗
+  //   - 浏览器模式开了摄像头: ScreenShare 主 + Camera PiP
+  //   - 仅屏幕共享: ScreenShare 主, 无 PiP
+  //   - 仅 Camera (OBS 或浏览器只开摄像头): Camera 主, 无 PiP
+  const screenShareTrack = tracks.find(
+    (tr) => tr.source === Track.Source.ScreenShare
+  );
+  const cameraTrack = tracks.find((tr) => tr.source === Track.Source.Camera);
+  const screenTrack = screenShareTrack || cameraTrack;
+  const faceCamTrack = screenShareTrack ? cameraTrack : undefined;
 
   // Capture the video element from VideoTrack via callback ref
   const videoContainerRef = useCallback((node: HTMLDivElement | null) => {
@@ -331,8 +343,20 @@ function VideoArea({
   }
 
   return (
-    <div className={`relative w-full h-full bg-bg-primary group ${screenFlash ? "screen-flash" : ""}`} ref={videoContainerRef}>
+    <div className={`relative w-full h-full bg-bg-primary group ${screenFlash ? "screen-flash" : ""} ${screenShake ? "video-shake" : ""}`} ref={videoContainerRef}>
       <VideoTrack trackRef={screenTrack} className="w-full h-full object-contain" />
+      {/* Face cam PiP — 主播脸的小窗, 右下角, 屏幕共享时才显示 */}
+      {faceCamTrack && (
+        <div className="absolute bottom-3 right-3 z-30 w-32 sm:w-40 md:w-48 aspect-video pixel-border bg-bg-primary overflow-hidden shadow-lg pointer-events-none">
+          <VideoTrack
+            trackRef={faceCamTrack}
+            className="w-full h-full object-cover"
+          />
+          <span className="absolute top-1 left-1 font-[family-name:var(--font-pixel)] text-[7px] text-accent-yellow bg-black/40 px-1 py-0.5">
+            CAM
+          </span>
+        </div>
+      )}
       <ReactionOverlay bursts={bursts} showBanner={showBanner} screenFlash={screenFlash} />
 
       {/* HUD */}
@@ -378,6 +402,7 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
   const { t } = useI18n();
   const room = useRoomContext();
   const participants = useParticipants();
+  // 见 isViewerParticipant: 排除主播/OBS ingress, AI audience bot, hover 预览.
   const viewers = participants.filter(isViewerParticipant);
   const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
@@ -396,6 +421,54 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
   const router = useRouter();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Click-time scatter particles — anchored to viewport via fixed positioning,
+  // so they're visible even on mobile chat tab where the video overlay is hidden.
+  type ClickBurstParticle = {
+    id: string;
+    x: number; y: number;       // origin in viewport px
+    dx: number; dy: number;     // outward target offset
+    icon: string;
+    glow: string;
+  };
+  const [clickBursts, setClickBursts] = useState<ClickBurstParticle[]>([]);
+  const spawnClickBurst = useCallback((rect: DOMRect, kind: ReactionKind) => {
+    const cfg = REACTION_CONFIG[kind];
+    if (!cfg) return;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const burstCount = 5;
+    const newBursts: ClickBurstParticle[] = Array.from({ length: burstCount }, (_, i) => {
+      // Upward cone: -90° ± 72°
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.8 * Math.PI;
+      const distance = 38 + Math.random() * 38;
+      return {
+        id: `cb-${Date.now()}-${i}-${Math.random()}`,
+        x: cx + (Math.random() - 0.5) * 12,
+        y: cy,
+        dx: Math.cos(angle) * distance,
+        dy: Math.sin(angle) * distance,
+        icon: cfg.icon,
+        glow: cfg.glowVar,
+      };
+    });
+    setClickBursts(prev => [...prev.slice(-40), ...newBursts]);
+    const ids = new Set(newBursts.map(b => b.id));
+    setTimeout(() => setClickBursts(prev => prev.filter(b => !ids.has(b.id))), 820);
+  }, []);
+
+  // Long-press / hold-to-spam — IG/TikTok/YouTube Live pattern.
+  // Tap = single reaction. Hold = continuous fire at ~8/sec until release.
+  // First fire is immediate; auto-fire kicks in after a 240ms grace so a
+  // quick tap doesn't accidentally double-fire.
+  const holdRef = useRef<{ timeoutId?: ReturnType<typeof setTimeout>; intervalId?: ReturnType<typeof setInterval> }>({});
+  const endHold = useCallback(() => {
+    if (holdRef.current.timeoutId) clearTimeout(holdRef.current.timeoutId);
+    if (holdRef.current.intervalId) clearInterval(holdRef.current.intervalId);
+    holdRef.current = {};
+  }, []);
+  // Cleanup any in-flight hold on unmount so navigating away mid-spam stops the interval
+  useEffect(() => endHold, [endHold]);
 
   // Debounced save for streamer editing
   const saveField = useCallback(
@@ -626,27 +699,63 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
             ))}
           </div>
 
-          {/* Reaction buttons with combo glow */}
-          <div className="px-3 py-2 border-t border-border-pixel/50 flex gap-1 shrink-0">
+          {/* Reaction strip — compact icon-only, supports tap = single, hold = continuous spam.
+              Mirrors IG/TikTok/YouTube Live: chat is the protagonist, reactions stay out of the way. */}
+          <div className="px-3 py-1 border-t border-border-pixel/50 flex items-center justify-between gap-1 shrink-0">
             {(Object.entries(REACTION_CONFIG) as [ReactionKind, { label: string; icon: string; color: string; glowVar: string }][]).map(
               ([kind, { icon, color, glowVar }]) => {
                 const tier = combo[kind]?.tier || 0;
+                const count = combo[kind]?.timestamps.length || 0;
                 const comboClass = tier >= 3 ? "reaction-btn-combo-3" : tier >= 2 ? "reaction-btn-combo-2" : tier >= 1 ? "reaction-btn-combo-1" : "";
+
+                const fireOnce = (btn: HTMLElement) => {
+                  spawnClickBurst(btn.getBoundingClientRect(), kind);
+                  sendReaction(kind);
+                };
+                const startHold = (btn: HTMLElement) => {
+                  endHold();
+                  // Immediate first fire + one-shot haptic at the start of the gesture
+                  fireOnce(btn);
+                  if (typeof navigator !== "undefined" && navigator.vibrate) {
+                    try { navigator.vibrate(12); } catch {}
+                  }
+                  // Auto-fire kicks in after a 240ms grace so quick taps are clearly single-fires
+                  holdRef.current.timeoutId = setTimeout(() => {
+                    holdRef.current.intervalId = setInterval(() => fireOnce(btn), 125); // ~8/sec
+                  }, 240);
+                };
+
                 return (
                   <button
                     key={kind}
-                    onClick={() => sendReaction(kind)}
-                    className={`flex-1 flex items-center justify-center gap-0.5 py-1.5 border transition-all text-xs active:scale-90 ${comboClass}`}
+                    type="button"
+                    onPointerDown={(e) => {
+                      // Capture the pointer so we still get pointerup even if user drags off
+                      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                      startHold(e.currentTarget as HTMLElement);
+                    }}
+                    onPointerUp={endHold}
+                    onPointerCancel={endHold}
+                    onPointerLeave={endHold}
+                    onContextMenu={(e) => e.preventDefault()}
+                    title={t(`reaction.${kind}`)}
+                    aria-label={t(`reaction.${kind}`)}
+                    className={`relative flex items-center justify-center gap-0.5 h-8 min-w-[36px] px-2 rounded text-base leading-none select-none touch-manipulation transition-transform duration-150 hover:scale-110 active:scale-90 ${comboClass}`}
                     style={{
-                      borderColor: tier > 0 ? `var(--${color})` : undefined,
-                      backgroundColor: tier > 0 ? `color-mix(in srgb, var(--${color}) ${10 + tier * 5}%, transparent)` : undefined,
+                      backgroundColor: tier > 0
+                        ? `color-mix(in srgb, var(--${color}) ${10 + tier * 7}%, transparent)`
+                        : "transparent",
+                      WebkitTapHighlightColor: "transparent",
                       "--glow-color": glowVar,
                     } as React.CSSProperties}
                   >
-                    <span className={tier >= 2 ? "text-base" : ""}>{icon}</span>
+                    <span>{icon}</span>
                     {tier >= 1 && (
-                      <span className="font-[family-name:var(--font-pixel)] text-[6px]" style={{ color: `var(--${color})` }}>
-                        x{combo[kind]?.timestamps.length || 0}
+                      <span
+                        className="font-[family-name:var(--font-pixel)] text-[7px] tabular-nums leading-none"
+                        style={{ color: `var(--${color})` }}
+                      >
+                        ×{count}
                       </span>
                     )}
                   </button>
@@ -871,12 +980,30 @@ function Sidebar({ viewerName, roomName, addReaction, combo, aiAudienceEnabled, 
             >
               <span className="w-2 h-2 rounded-full shrink-0 bg-accent-cyan" />
               <span className="text-xs text-text-primary truncate flex-1">
-                {p.identity}
+                {/* identity 是 `viewer-<nick>-<rand>` 的去重 ID,显示用 name */}
+                {p.name || p.identity}
               </span>
             </div>
           ))}
         </div>
       )}
+
+      {/* Click-burst particles — viewport-anchored, work even when chat tab hides the video */}
+      {clickBursts.map((b) => (
+        <span
+          key={b.id}
+          className="click-scatter-particle"
+          style={{
+            left: `${b.x}px`,
+            top: `${b.y}px`,
+            "--scatter-x": `${b.dx}px`,
+            "--scatter-y": `${b.dy}px`,
+            "--scatter-glow": b.glow,
+          } as React.CSSProperties}
+        >
+          {b.icon}
+        </span>
+      ))}
     </div>
   );
 }
@@ -899,7 +1026,7 @@ function WatchLayout({
 }) {
   const { t } = useI18n();
   const [desktop, setDesktop] = useState(false);
-  const { bursts, combo, showBanner, screenFlash, addReaction } = useReactionSystem();
+  const { bursts, combo, showBanner, screenFlash, screenShake, addReaction } = useReactionSystem();
 
   useEffect(() => {
     const check = () => setDesktop(window.innerWidth >= 1024);
@@ -908,7 +1035,7 @@ function WatchLayout({
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  const videoProps = { bursts, showBanner, screenFlash };
+  const videoProps = { bursts, showBanner, screenFlash, screenShake };
   const sidebarProps = {
     viewerName: identity,
     roomName,
