@@ -9,7 +9,13 @@ export interface RoomChatMessage {
   botPersona?: string;
 }
 
-export type RoomDataMessage = RoomChatMessage;
+export interface RoomStickerMessage {
+  type: "sticker";
+  user: string;
+  stickerId: string;
+}
+
+export type RoomDataMessage = RoomChatMessage | RoomStickerMessage;
 
 export interface ChatTimelineMessage {
   id: string;
@@ -18,6 +24,7 @@ export interface ChatTimelineMessage {
   time: number;
   bot?: boolean;
   botPersona?: string;
+  stickerId?: string;
 }
 
 export function isBotChatMessage(
@@ -45,6 +52,18 @@ export function parseRoomDataMessage(
         bot: parsed.bot === true,
         botPersona:
           typeof parsed.botPersona === "string" ? parsed.botPersona : undefined,
+      };
+    }
+
+    if (
+      parsed.type === "sticker" &&
+      typeof parsed.user === "string" &&
+      typeof parsed.stickerId === "string"
+    ) {
+      return {
+        type: "sticker",
+        user: parsed.user,
+        stickerId: parsed.stickerId,
       };
     }
   } catch {}

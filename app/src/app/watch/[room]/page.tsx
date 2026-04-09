@@ -15,6 +15,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChatMessageRow } from "@/components/watch/chat/ChatMessageRow";
 import { EmojiPicker } from "@/components/EmojiPicker";
+import { StickerPicker } from "@/components/StickerPicker";
+import { isValidStickerId } from "@/lib/stickers";
 import { createClient } from "@/lib/supabase/client";
 import {
   encodeRoomDataMessage,
@@ -404,9 +406,10 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Chat input — emoji picker integration
+  // Chat input — emoji + sticker picker integration
   const chatInputRef = useRef<HTMLInputElement>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [stickerOpen, setStickerOpen] = useState(false);
   const insertEmoji = useCallback((emoji: string) => {
     const el = chatInputRef.current;
     if (!el) {
@@ -484,7 +487,7 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
     return () => clearInterval(interval);
   }, [decodedRoom]);
 
-  // Data channel messages — skip messages from self (already added locally in sendChat)
+  // Data channel messages — skip messages from self (already added locally in sendChat/sendSticker)
   useEffect(() => {
     const handleData = (payload: Uint8Array, participant?: { identity: string }) => {
       if (participant?.identity === room.localParticipant.identity) return;
@@ -500,6 +503,20 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
             time: Date.now(),
             bot: msg.bot,
             botPersona: msg.botPersona,
+          },
+        ]);
+      } else if (msg.type === "sticker") {
+        // Drop unknown sticker IDs — defends against future-version peers
+        // sending stickers we don't have files for
+        if (!isValidStickerId(msg.stickerId)) return;
+        setMessages((prev) => [
+          ...prev.slice(-200),
+          {
+            id: `${Date.now()}-${Math.random()}`,
+            user: msg.user,
+            text: "",
+            time: Date.now(),
+            stickerId: msg.stickerId,
           },
         ]);
       }
@@ -565,6 +582,37 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
       }).catch(() => {});
     }
     setInput("");
+  };
+
+  // Sticker send: standalone message, no text input — Discord pattern.
+  // Picker calls this and immediately closes itself (handled in StickerPicker).
+  const sendSticker = (stickerId: string) => {
+    if (!isValidStickerId(stickerId)) return;
+    const payload = encodeRoomDataMessage({
+      type: "sticker",
+      user: viewerName,
+      stickerId,
+    });
+    room.localParticipant.publishData(payload, { reliable: true });
+    setMessages((prev) => [
+      ...prev.slice(-200),
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        user: viewerName,
+        text: "",
+        time: Date.now(),
+        stickerId,
+      },
+    ]);
+    if (aiAudienceEnabled) {
+      void mirrorAiAudienceContextEvent({
+        roomSlug: decodedRoom,
+        kind: "chat_message",
+        user: viewerName,
+        text: `[sticker:${stickerId}]`,
+        bot: false,
+      }).catch(() => {});
+    }
   };
 
   const endStream = async () => {
@@ -646,7 +694,7 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
               <div className="relative shrink-0">
                 <button
                   type="button"
-                  onClick={() => setEmojiOpen((v) => !v)}
+                  onClick={() => { setEmojiOpen((v) => !v); setStickerOpen(false); }}
                   className={`h-full px-2 border text-base leading-none transition-colors ${
                     emojiOpen
                       ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
@@ -661,6 +709,28 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
                   <EmojiPicker
                     onSelect={insertEmoji}
                     onClose={() => setEmojiOpen(false)}
+                  />
+                )}
+              </div>
+              {/* Sticker picker trigger + popover */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => { setStickerOpen((v) => !v); setEmojiOpen(false); }}
+                  className={`h-full px-2 border text-base leading-none transition-colors ${
+                    stickerOpen
+                      ? "border-accent-pink text-accent-pink bg-accent-pink/10"
+                      : "border-border-pixel text-text-secondary hover:text-accent-pink hover:border-accent-pink/60"
+                  }`}
+                  title="Sticker"
+                  aria-label="Open sticker picker"
+                >
+                  🖼️
+                </button>
+                {stickerOpen && (
+                  <StickerPicker
+                    onSelect={sendSticker}
+                    onClose={() => setStickerOpen(false)}
                   />
                 )}
               </div>
