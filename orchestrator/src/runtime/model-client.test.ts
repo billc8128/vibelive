@@ -287,7 +287,7 @@ describe("OpenRouterModelClient", () => {
         expect.objectContaining({ type: "text" }),
         expect.objectContaining({
           type: "video_url",
-          video_url: { url: "data:video/webm;base64,clip" },
+          videoUrl: { url: "data:video/webm;base64,clip" },
         }),
       ]),
     );

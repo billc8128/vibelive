@@ -167,7 +167,7 @@ function buildUserMessageContent(persona: Persona, packet: ContextPacket) {
   const content: Array<
     | { type: "text"; text: string }
     | { type: "image_url"; image_url: { url: string } }
-    | { type: "video_url"; video_url: { url: string } }
+    | { type: "video_url"; videoUrl: { url: string } }
   > = [
     {
       type: "text",
@@ -187,7 +187,7 @@ function buildUserMessageContent(persona: Persona, packet: ContextPacket) {
   if (packet.latestVideoClip?.url) {
     content.push({
       type: "video_url",
-      video_url: {
+      videoUrl: {
         url: packet.latestVideoClip.url,
       },
     });
