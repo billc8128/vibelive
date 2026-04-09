@@ -215,22 +215,41 @@ class FaceTrackerImpl {
     if (!matrices?.length || !blendshapes?.length) return null;
 
     // ── Head pose ────────────────────────────────────────────────
-    // facialTransformationMatrixes[0].data 是 16 个 float, column-major
-    // 4x4. 旋转部分:
-    //   m[col*4 + row] for col,row ∈ 0..2
+    // facialTransformationMatrixes[0].data 是 16 个 float, MediaPipe 内部
+    // 是 Eigen column-major 格式: m[col*4 + row].
+    //   m02 = m[8]  (col 2, row 0)
+    //   m12 = m[9]  (col 2, row 1)
+    //   m22 = m[10] (col 2, row 2)
+    //   m10 = m[1]  (col 0, row 1)
+    //   m11 = m[5]  (col 1, row 1)
+    //
+    // YXZ Euler 解码 (R = Ry·Rx·Rz) — 用矩阵第 3 列(局部 Z 轴在旋转后
+    // 的位置)提取 pitch + yaw, 第 1 列前两行提取 roll:
+    //
+    //   m02 = sin(yaw)·cos(pitch)
+    //   m12 = -sin(pitch)
+    //   m22 = cos(yaw)·cos(pitch)
+    //   m10 = cos(pitch)·sin(roll)
+    //   m11 = cos(pitch)·cos(roll)
+    //
+    //   → pitch = asin(-m12)
+    //   → yaw   = atan2(m02, m22)
+    //   → roll  = atan2(m10, m11)
+    //
+    // ⚠ 历史 bug: 之前用 m21/m20/m01 提取, 这些元素是
+    //   m21 = sy·sr + cy·sp·cr  (YXZ 下不是干净的角度指示)
+    //   小 pitch + 小 roll 时 m21 ≈ 0, 解出来的 pitch 永远 ≈ 0,
+    //   头部完全不动, 模型只剩 idle breath 看起来像"随机摆动".
     const m = matrices[0].data;
-    const m00 = m[0], m10 = m[1], m20 = m[2];
-    const m01 = m[4], m11 = m[5], m21 = m[6];
-    const m02 = m[8], m12 = m[9], m22 = m[10];
-    void m00; void m02; void m10; void m12; // 仅取需要的元素
+    const m02 = m[8];
+    const m12 = m[9];
+    const m22 = m[10];
+    const m10 = m[1];
+    const m11 = m[5];
 
-    // Y-X-Z Euler (常用 yaw-pitch-roll), 单位弧度:
-    //   pitch (X 轴, 抬头/低头)  = asin(-m21)
-    //   yaw   (Y 轴, 左右转头)   = atan2(m20, m22)
-    //   roll  (Z 轴, 歪头)       = atan2(m01, m11)
-    const pitch = Math.asin(-Math.max(-1, Math.min(1, m21)));
-    const yaw = Math.atan2(m20, m22);
-    const roll = Math.atan2(m01, m11);
+    const pitch = Math.asin(-Math.max(-1, Math.min(1, m12)));
+    const yaw = Math.atan2(m02, m22);
+    const roll = Math.atan2(m10, m11);
     const RAD2DEG = 180 / Math.PI;
 
     // VTube Studio 习惯: 摄像头镜像 → 用户右转头, 模型也右转头.
