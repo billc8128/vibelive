@@ -57,9 +57,11 @@ describe("OpenRouterScreenshotSummarizer", () => {
       RequestInit | undefined,
     ];
     const body = JSON.parse(String(requestInit?.body)) as {
+      max_tokens?: number;
       messages: Array<{ role: string; content: unknown }>;
     };
 
+    expect(body.max_tokens).toBeGreaterThanOrEqual(500);
     expect(body.messages[0]?.content).toContain(
       "Summarize one screenshot from a vibe coding livestream",
     );
