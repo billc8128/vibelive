@@ -14,12 +14,24 @@ export interface StudioConfig {
   /** Face tracker 输出 angle 缩放. 0.4 = MediaPipe 物理 ±50° 压成 ±20°
    *  匹配 vtube.json 校准. 调大 = 更灵敏, 调小 = 更迟钝. */
   faceAngleScale: number;
+  /** 眼睛开合 (blink) 灵敏度. 1.0 = 原始. 调大 = 更早判定为闭眼,
+   *  调小 = 需要明显闭才闭. */
+  eyeOpenScale: number;
+  /** 眼球追踪 (look up/down/left/right) 灵敏度. 1.0 = 原始. */
+  eyeBallScale: number;
+  /** 身体跟随头部强度. 0 = 不跟, 1 = 跟头同步 (但通过 0.3x ratio 缩
+   *  到合理 body 转动幅度). saba1B 默认 vtube.json mapping 可能 dummy,
+   *  我们手动写 body 参数. */
+  bodyFollowFactor: number;
   /** 呼吸模拟开关. cubism 内置 breath 写 ParamAngleY (dummy), 我们自己写. */
   breathEnabled: boolean;
   /** 呼吸 Y 轴上下振幅 (度). */
   breathAmpY: number;
   /** 呼吸频率 Hz. ~0.25 Hz 接近 normal 人类呼吸 (15 次/分钟). */
   breathFreqHz: number;
+  /** Calibration 版本号 — 自增触发 face tracker 在下一帧记录 baseline.
+   *  新的 baseline 用作"中性姿态", 后续 raw input 减去 baseline. */
+  calibrationVersion: number;
 }
 
 /**
@@ -28,9 +40,13 @@ export interface StudioConfig {
  */
 export const STUDIO_CONFIG_DEFAULTS: StudioConfig = {
   faceAngleScale: 0.4,
+  eyeOpenScale: 1.0,
+  eyeBallScale: 1.0,
+  bodyFollowFactor: 0.5,
   breathEnabled: true,
   breathAmpY: 4,
   breathFreqHz: 0.25,
+  calibrationVersion: 0,
 };
 
 /**

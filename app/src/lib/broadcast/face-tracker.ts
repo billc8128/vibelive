@@ -48,6 +48,14 @@ class FaceTrackerImpl {
   // 周期性 debug log: 每隔 N 帧打印一次完整矩阵 + 解出来的 yaw/pitch/roll,
   // 帮用户在头部跟随出问题时直接看 console 数值. 60 帧 ≈ 1 秒.
   private debugFrameCounter = 0;
+  // Calibration baseline — 用户点"校准"按钮时记录, 后续 raw 减 baseline.
+  // calibrationVersion 监听 studioConfig 变化, 不等的下一帧重新记录.
+  private lastCalibVersion = 0;
+  private baseYaw = 0;
+  private basePitch = 0;
+  private baseRoll = 0;
+  private baseEyeBlinkLeft = 0;
+  private baseEyeBlinkRight = 0;
 
   get running(): boolean {
     return this._running;
@@ -256,6 +264,32 @@ class FaceTrackerImpl {
     const roll = Math.atan2(m10, m11);
     const RAD2DEG = 180 / Math.PI;
 
+    // ── Calibration baseline 检查 ─────────────────────────────────
+    // 如果用户点了校准按钮 (calibrationVersion 自增), 记录当前 raw 值
+    // 作为 "中性姿态" baseline. 后续输出 = raw - baseline, 让"自然正脸"
+    // 对应模型的"中性表情".
+    if (studioConfig.calibrationVersion !== this.lastCalibVersion) {
+      this.lastCalibVersion = studioConfig.calibrationVersion;
+      this.baseYaw = yaw;
+      this.basePitch = pitch;
+      this.baseRoll = roll;
+      // 同时记录眼睛 baseline (在下面 blendshapes 处理时用)
+      this.baseEyeBlinkLeft =
+        blendshapes[0].categories.find((c) => c.categoryName === "eyeBlinkLeft")
+          ?.score ?? 0;
+      this.baseEyeBlinkRight =
+        blendshapes[0].categories.find((c) => c.categoryName === "eyeBlinkRight")
+          ?.score ?? 0;
+      console.log(
+        `[face-tracker] ✓ 校准完成 baseline yaw=${(yaw * RAD2DEG).toFixed(1)}° pitch=${(pitch * RAD2DEG).toFixed(1)}° roll=${(roll * RAD2DEG).toFixed(1)}° eyeL=${this.baseEyeBlinkLeft.toFixed(2)} eyeR=${this.baseEyeBlinkRight.toFixed(2)}`
+      );
+    }
+
+    // 减去 baseline → 相对偏移
+    const yawRel = yaw - this.baseYaw;
+    const pitchRel = pitch - this.basePitch;
+    const rollRel = roll - this.baseRoll;
+
     // ⚙ 校准 scale: MediaPipe 物理角度太大, 跟 vtube.json 校准不匹配,
     // 缩放后再喂. 默认 0.4, 通过 studio settings UI 可调.
     const HEAD_ANGLE_SCALE = studioConfig.faceAngleScale;
@@ -283,12 +317,10 @@ class FaceTrackerImpl {
     }
 
     // VTube Studio 习惯: 摄像头镜像 → 用户右转头, 模型也右转头.
-    // 乘 HEAD_ANGLE_SCALE 把 MediaPipe 的物理角度压到 VTS 的视觉角度区间.
-    // 注: 之前对 yaw 取负想当然是错的 (用户报告"方向反"). MediaPipe matrix
-    // 已经是 face → camera 系, 直接 atan2 出来的 yaw 跟 VTS 同方向.
-    const faceX = yaw * RAD2DEG * HEAD_ANGLE_SCALE;
-    const faceY = pitch * RAD2DEG * HEAD_ANGLE_SCALE;
-    const faceZ = -roll * RAD2DEG * HEAD_ANGLE_SCALE;
+    // 用 baseline 相对值 (yawRel/pitchRel/rollRel) 而不是 raw, 让校准生效.
+    const faceX = yawRel * RAD2DEG * HEAD_ANGLE_SCALE;
+    const faceY = pitchRel * RAD2DEG * HEAD_ANGLE_SCALE;
+    const faceZ = -rollRel * RAD2DEG * HEAD_ANGLE_SCALE;
 
     // ── Blendshapes (ARKit 52 类别) ──────────────────────────────
     const bs: Record<string, number> = {};
@@ -298,9 +330,23 @@ class FaceTrackerImpl {
 
     // EyeOpen* — VTS 的 EyeOpenRight/Left 默认范围 [0, 0.5] (1.0 = 大睁眼).
     // saba1B 的 .vtube.json 用 InputRangeUpper=0.5 → 输出 1 (全开).
-    // 所以我们输出 (1 - blink) * 0.5: blink=0 (大睁) → 0.5, blink=1 (闭) → 0.
-    const eyeOpenLeft = (1 - (bs.eyeBlinkLeft ?? 0)) * 0.5;
-    const eyeOpenRight = (1 - (bs.eyeBlinkRight ?? 0)) * 0.5;
+    //
+    // 计算流程:
+    //   1. raw blink ∈ [0, 1], baseline 是用户校准时的 blink 值
+    //      (不同人光线 / 眼型的 baseline 不一样, 0.05-0.3 都正常)
+    //   2. 减 baseline 得到"相对闭眼度": 0 = 当前同 baseline, >0 = 比
+    //      baseline 闭得更多
+    //   3. 乘 eyeOpenScale (灵敏度): 大 → 微微一闭就完全闭, 小 → 需要
+    //      明显闭才闭
+    //   4. 1 - 这个值, 再 clamp [0, 1], 再 * 0.5 得到 VTS 输出范围 [0, 0.5]
+    const blinkLRel =
+      ((bs.eyeBlinkLeft ?? 0) - this.baseEyeBlinkLeft) *
+      studioConfig.eyeOpenScale;
+    const blinkRRel =
+      ((bs.eyeBlinkRight ?? 0) - this.baseEyeBlinkRight) *
+      studioConfig.eyeOpenScale;
+    const eyeOpenLeft = Math.max(0, Math.min(1, 1 - blinkLRel)) * 0.5;
+    const eyeOpenRight = Math.max(0, Math.min(1, 1 - blinkRRel)) * 0.5;
 
     // jawOpen → MouthOpen: 直接 0..1, 跟 VTS 一致
     const jawOpen = bs.jawOpen ?? 0;
@@ -309,15 +355,16 @@ class FaceTrackerImpl {
     const smile = ((bs.mouthSmileLeft ?? 0) + (bs.mouthSmileRight ?? 0)) / 2;
 
     // 视线 — 用 ARKit 的 eyeLookIn/Out 推近似 X. Y 用 Up/Down.
-    // saba1B 的视线 mapping 范围是 [-1, 1].
+    // saba1B 的视线 mapping 范围是 [-1, 1]. 用 eyeBallScale 调灵敏度.
+    const ebs = studioConfig.eyeBallScale;
     const eyeXLeft =
-      (bs.eyeLookOutLeft ?? 0) - (bs.eyeLookInLeft ?? 0); // 左眼向左为 +
+      ((bs.eyeLookOutLeft ?? 0) - (bs.eyeLookInLeft ?? 0)) * ebs;
     const eyeYLeft =
-      (bs.eyeLookUpLeft ?? 0) - (bs.eyeLookDownLeft ?? 0);
+      ((bs.eyeLookUpLeft ?? 0) - (bs.eyeLookDownLeft ?? 0)) * ebs;
     const eyeXRight =
-      (bs.eyeLookInRight ?? 0) - (bs.eyeLookOutRight ?? 0); // 右眼向左为 +
+      ((bs.eyeLookInRight ?? 0) - (bs.eyeLookOutRight ?? 0)) * ebs;
     const eyeYRight =
-      (bs.eyeLookUpRight ?? 0) - (bs.eyeLookDownRight ?? 0);
+      ((bs.eyeLookUpRight ?? 0) - (bs.eyeLookDownRight ?? 0)) * ebs;
 
     return {
       // ── Head pose ──

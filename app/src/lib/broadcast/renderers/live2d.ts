@@ -309,15 +309,17 @@ export class Live2DRenderer implements SourceRenderer {
 
         // 构建 alias mirror 表 — 已知的多层 angle 命名:
         //   ParamAngleX → ParamAngleMX (Master), ParamAngleSX (Sub)
-        //   ParamBodyAngleX → ParamBodyAngleMX, ParamBodyAngleSX
+        //   ParamBodyAngleY → ParamBodyY2 (saba1B 用非标准 Y2/Z2 命名)
         // 只保留模型实际拥有的 alias.
         const aliasCandidates: Record<string, string[]> = {
           ParamAngleX: ["ParamAngleMX", "ParamAngleSX"],
           ParamAngleY: ["ParamAngleMY", "ParamAngleSY"],
           ParamAngleZ: ["ParamAngleMZ", "ParamAngleSZ"],
-          ParamBodyAngleX: ["ParamBodyAngleMX", "ParamBodyAngleSX"],
-          ParamBodyAngleY: ["ParamBodyAngleMY", "ParamBodyAngleSY"],
-          ParamBodyAngleZ: ["ParamBodyAngleMZ", "ParamBodyAngleSZ"],
+          // saba1B body 没有标准 M/S 后缀, 但有 Y2/Z2 — 大概率是 deformer
+          // 实际 bind 的位置 (类比 head 的 M/S 设计).
+          ParamBodyAngleX: ["ParamBodyAngleMX", "ParamBodyAngleSX", "ParamBodyX2"],
+          ParamBodyAngleY: ["ParamBodyAngleMY", "ParamBodyAngleSY", "ParamBodyY2"],
+          ParamBodyAngleZ: ["ParamBodyAngleMZ", "ParamBodyAngleSZ", "ParamBodyZ2"],
         };
         const mirror: Array<[string, string[]]> = [];
         for (const [from, candidates] of Object.entries(aliasCandidates)) {
@@ -365,7 +367,27 @@ export class Live2DRenderer implements SourceRenderer {
           this.applier.apply(internal.coreModel, this.latestInputs);
         }
 
-        // 2) 自己模拟呼吸 — cubism 内置 breath 写 ParamAngleY 但是 dummy.
+        // 2) Body follows head — vtube applier 写 ParamBodyAngleX 可能是
+        //    dummy (saba1B 上 head/body 都需要 alias). 这里手动从 ParamAngleX
+        //    的当前值乘 bodyFollowFactor 写到 ParamBodyAngleX/Y/Z, 再让
+        //    下面的 alias mirror 复制到 ParamBodyY2/Z2 等候选.
+        //    bodyFollowFactor=0 → 完全不跟, 1.0 → 跟头同幅度 (太大),
+        //    默认 0.5 是合理的"轻微跟随".
+        if (studioConfig.bodyFollowFactor > 0) {
+          const cm = internal.coreModel;
+          const ax = cm.getParameterValueById?.("ParamAngleX") ?? 0;
+          const ay = cm.getParameterValueById?.("ParamAngleY") ?? 0;
+          const az = cm.getParameterValueById?.("ParamAngleZ") ?? 0;
+          const f = studioConfig.bodyFollowFactor;
+          if (Number.isFinite(ax))
+            cm.setParameterValueById("ParamBodyAngleX", ax * f);
+          if (Number.isFinite(ay))
+            cm.setParameterValueById("ParamBodyAngleY", ay * f);
+          if (Number.isFinite(az))
+            cm.setParameterValueById("ParamBodyAngleZ", az * f);
+        }
+
+        // 3) 自己模拟呼吸 — cubism 内置 breath 写 ParamAngleY 但是 dummy.
         //    在 ParamAngleY 上 add sin 波 (面捕的 set 之后 add), 让模型有
         //    持续的轻微上下点头, 模拟自然呼吸. 振幅 / 频率从 studioConfig
         //    读, 用户 UI 可调.
@@ -379,11 +401,19 @@ export class Live2DRenderer implements SourceRenderer {
           if (Number.isFinite(cur)) {
             cm.setParameterValueById("ParamAngleY", cur + breath);
           }
+          // 同样在 body Y 上轻微 add 一点呼吸 (一半幅度), 让胸腔起伏
+          const curBody = cm.getParameterValueById?.("ParamBodyAngleY") ?? 0;
+          if (Number.isFinite(curBody)) {
+            cm.setParameterValueById(
+              "ParamBodyAngleY",
+              curBody + breath * 0.5
+            );
+          }
         }
 
-        // 3) Alias mirror — 把标准参数的当前值 (face apply + breath 之后)
-        //    复制到所有已知 alias (saba1B 的 ParamAngleMX/SX 等真驱动器).
-        //    必须在 breath 之后, 这样呼吸也会 mirror 到 alias.
+        // 4) Alias mirror — 把标准参数的当前值 (face + body + breath 之后)
+        //    复制到所有已知 alias (saba1B 的 ParamAngleMX/SX, ParamBodyY2 等
+        //    真驱动器). 必须最后跑, 让前面所有写入都被 mirror.
         if (this.aliasMirror.length > 0) {
           const cm = internal.coreModel;
           for (const [from, targets] of this.aliasMirror) {
