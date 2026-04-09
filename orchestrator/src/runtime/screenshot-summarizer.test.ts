@@ -11,7 +11,7 @@ describe("OpenRouterScreenshotSummarizer", () => {
             {
               message: {
                 content:
-                  '{"uiLanguage":"zh","primarySurface":"terminal","dominantSource":"agent_output","humanPromptSummary":"主播在要求 agent 调整 AI audience 行为","agentOutputSummary":"agent 正在解释 prompt 和 runtime 调整","currentTaskSummary":"主播在调试 AI audience 的语言和节奏","suggestedAngles":["为什么先改 prompt 而不是 gate"]}',
+                  '{"uiLanguage":"zh","primarySurface":"terminal","dominantSource":"agent_output","contentContext":"streamer_workspace","activityConfidence":"high","streamerActivity":"主播在调试 AI audience 的语言和节奏","humanPromptSummary":"主播在要求 agent 调整 AI audience 行为","agentOutputSummary":"agent 正在解释 prompt 和 runtime 调整","currentTaskSummary":"主播在调试 AI audience 的语言和节奏","suggestedAngles":["为什么先改 prompt 而不是 gate"]}',
               },
             },
           ],
@@ -37,6 +37,9 @@ describe("OpenRouterScreenshotSummarizer", () => {
       uiLanguage: "zh",
       primarySurface: "terminal",
       dominantSource: "agent_output",
+      contentContext: "streamer_workspace",
+      activityConfidence: "high",
+      streamerActivity: "主播在调试 AI audience 的语言和节奏",
       humanPromptSummary: "主播在要求 agent 调整 AI audience 行为",
       agentOutputSummary: "agent 正在解释 prompt 和 runtime 调整",
       currentTaskSummary: "主播在调试 AI audience 的语言和节奏",
@@ -63,9 +66,19 @@ describe("OpenRouterScreenshotSummarizer", () => {
     expect(body.messages[0]?.content).toContain(
       "Translate low-level hooks, logs, and bug text into higher-level viewer takeaways",
     );
-    expect(String((body.messages[1]?.content as Array<{ type?: string; text?: string }>)[0]?.text)).toContain(
+    expect(body.messages[0]?.content).toContain(
+      "Identify what the streamer is doing with the content, not just what the content says",
+    );
+    const userText = String(
+      (body.messages[1]?.content as Array<{ type?: string; text?: string }>)[0]
+        ?.text,
+    );
+    expect(userText).toContain(
       "Suggested angles should sound like public-chat questions about tools, workflow, project stage, platform choice, or current blocker",
     );
+    expect(userText).toContain('"contentContext"');
+    expect(userText).toContain('"activityConfidence"');
+    expect(userText).toContain('"streamerActivity"');
     expect(body.messages[1]?.content).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "text" }),

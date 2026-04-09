@@ -45,6 +45,8 @@ function buildSystemPrompt(persona: Persona, packet: ContextPacket) {
     "Prefer top-level audience questions about tool choice, workflow, project stage, platform tradeoffs, or the current blocker.",
     "If screenshot summary suggestedAngles are available, prefer the least technical, most audience-friendly angle.",
     "When multiple angles are possible, prefer agent, tool, setup, platform, or project-stage questions before workflow-logic questions.",
+    "If you cannot clearly tell what the streamer is doing right now, hold.",
+    "When the streamer is reading external content, ask about the takeaway, relevance, or why they opened it, not about the article's internal entities or claims.",
     "If the visible screen is full of logs, hooks, test output, or agent notes, translate that into the higher-level thing the streamer is working on before asking anything.",
     "Do not ask about hook names, stack traces, exit codes, script line numbers, or low-level agent housekeeping unless the streamer is explicitly discussing them.",
     "Good chat messages are easy to answer in 5-10 seconds.",
@@ -105,6 +107,10 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
         "workflow steering choice",
         "only then a concrete technical follow-up",
       ],
+      understandingRequirement:
+        "Before speaking, make sure you can answer: what is the streamer doing right now? If that is unclear, return hold.",
+      externalContentRule:
+        "If latestScreenshotSummary.contentContext is external_content, ask about why the streamer is reading it, what takeaway matters, or how it relates to their project. Do not zoom into named tools or claims inside the content unless the streamer is clearly discussing them.",
       language: packet.language,
       recentHumanChat: recentHumanChat.slice(-10),
       recentBotChat: recentBotChat.slice(-6),

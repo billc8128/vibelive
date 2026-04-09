@@ -106,6 +106,12 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[0]?.content).toContain(
       "When multiple angles are possible, prefer agent, tool, setup, platform, or project-stage questions before workflow-logic questions.",
     );
+    expect(body.messages[0]?.content).toContain(
+      "If you cannot clearly tell what the streamer is doing right now, hold.",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "When the streamer is reading external content, ask about the takeaway, relevance, or why they opened it",
+    );
   });
 
   it("uses screenshot summary instead of raw image input for chat generation", async () => {
@@ -151,6 +157,9 @@ describe("OpenRouterModelClient", () => {
         uiLanguage: "zh",
         primarySurface: "terminal",
         dominantSource: "agent_output",
+        contentContext: "streamer_workspace",
+        activityConfidence: "high",
+        streamerActivity: "主播在调试 AI audience 的语言问题",
         humanPromptSummary: "主播在要求 agent 调整 prompt",
         agentOutputSummary: "agent 在解释 runtime 改动",
         currentTaskSummary: "主播在调试 AI audience 的语言问题",
@@ -180,6 +189,8 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[1]?.content).toContain('"avoidTopics"');
     expect(body.messages[1]?.content).toContain('"suggestedAnglePolicy"');
     expect(body.messages[1]?.content).toContain('"suggestedAngleOrder"');
+    expect(body.messages[1]?.content).toContain('"understandingRequirement"');
+    expect(body.messages[1]?.content).toContain('"externalContentRule"');
     expect(body.messages[1]?.content).toContain('"latestScreenshotSummary"');
   });
 
