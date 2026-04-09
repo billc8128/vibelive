@@ -316,11 +316,16 @@ class FaceTrackerImpl {
       );
     }
 
-    // VTube Studio 习惯: 摄像头镜像 → 用户右转头, 模型也右转头.
+    // 镜像模式 — 用户做什么动作, 屏幕上模型做镜像 (符合 selfie 直觉,
+    // 跟 VTube Studio 默认行为一致). 用户头倒右 → 模型头倒右 (屏幕看是
+    // 模型左, 因为模型面对用户).
+    //
+    // 历史: 之前对 yaw 取负 → 用户报告"反" → 改正号 → 用户又报告"全部反".
+    // 现在 3 个 axis 全 flip, 用户的 "反" 反过来就是对的.
     // 用 baseline 相对值 (yawRel/pitchRel/rollRel) 而不是 raw, 让校准生效.
-    const faceX = yawRel * RAD2DEG * HEAD_ANGLE_SCALE;
-    const faceY = pitchRel * RAD2DEG * HEAD_ANGLE_SCALE;
-    const faceZ = -rollRel * RAD2DEG * HEAD_ANGLE_SCALE;
+    const faceX = -yawRel * RAD2DEG * HEAD_ANGLE_SCALE;
+    const faceY = -pitchRel * RAD2DEG * HEAD_ANGLE_SCALE;
+    const faceZ = rollRel * RAD2DEG * HEAD_ANGLE_SCALE;
 
     // ── Blendshapes (ARKit 52 类别) ──────────────────────────────
     const bs: Record<string, number> = {};
