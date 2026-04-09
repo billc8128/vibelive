@@ -14,6 +14,7 @@ import { Track, RoomEvent } from "livekit-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChatMessageRow } from "@/components/watch/chat/ChatMessageRow";
+import { EmojiPicker } from "@/components/EmojiPicker";
 import { createClient } from "@/lib/supabase/client";
 import {
   encodeRoomDataMessage,
@@ -403,6 +404,27 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Chat input — emoji picker integration
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const insertEmoji = useCallback((emoji: string) => {
+    const el = chatInputRef.current;
+    if (!el) {
+      setInput((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const newValue = el.value.slice(0, start) + emoji + el.value.slice(end);
+    setInput(newValue);
+    // Restore caret position to just after the inserted emoji
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }, []);
+
   // Debounced save for streamer editing
   const saveField = useCallback(
     (fields: Record<string, string>) => {
@@ -611,12 +633,41 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
           </div>
 
           <div className="px-3 py-2 border-t border-border-pixel/50 shrink-0">
-            <form onSubmit={(e) => { e.preventDefault(); sendChat(); }} className="flex gap-2">
-              <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
+            <form onSubmit={(e) => { e.preventDefault(); sendChat(); }} className="flex gap-2 items-stretch">
+              <input
+                ref={chatInputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
                 placeholder={t('chat.placeholder')}
-                className="flex-1 bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-cyan focus:outline-none" />
-              <button type="submit"
-                className="px-3 py-1.5 bg-accent-cyan/20 border border-accent-cyan/40 text-accent-cyan text-xs hover:bg-accent-cyan/30 transition-colors">
+                className="flex-1 min-w-0 bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-cyan focus:outline-none"
+              />
+              {/* Emoji picker trigger + popover (Discord-style) */}
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setEmojiOpen((v) => !v)}
+                  className={`h-full px-2 border text-base leading-none transition-colors ${
+                    emojiOpen
+                      ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
+                      : "border-border-pixel text-text-secondary hover:text-accent-cyan hover:border-accent-cyan/60"
+                  }`}
+                  title="Emoji"
+                  aria-label="Open emoji picker"
+                >
+                  😀
+                </button>
+                {emojiOpen && (
+                  <EmojiPicker
+                    onSelect={insertEmoji}
+                    onClose={() => setEmojiOpen(false)}
+                  />
+                )}
+              </div>
+              <button
+                type="submit"
+                className="shrink-0 px-3 py-1.5 bg-accent-cyan/20 border border-accent-cyan/40 text-accent-cyan text-xs hover:bg-accent-cyan/30 transition-colors"
+              >
                 {t('chat.send')}
               </button>
             </form>
