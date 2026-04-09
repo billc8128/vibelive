@@ -274,8 +274,9 @@ export default async function AdminPage() {
               AI Audience Cost Monitor
             </h1>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-text-secondary">
-              基于 orchestrator 内存里的 OpenRouter usage 汇总。现在是 MVP：
-              重启 orchestrator 会清空，后面再接数据库和权限。
+              基于 orchestrator 记录的 OpenRouter usage 汇总。生产环境写入
+              Railway Postgres；数据库不可用时会降级展示当前进程内的临时数据，
+              权限控制后续再补。
             </p>
           </div>
           <a

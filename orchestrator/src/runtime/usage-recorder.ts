@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { Pool } from "pg";
+import type { QueryResultRow } from "pg";
 
 export interface OpenRouterUsage {
   prompt_tokens?: number;
@@ -71,9 +73,9 @@ export interface UsageRecorder {
   summary(): AiUsageSummary | Promise<AiUsageSummary>;
 }
 
-interface SupabaseUsageRow {
+interface PostgresUsageRow extends QueryResultRow {
   id?: string;
-  created_at?: string;
+  created_at?: string | Date;
   room_slug?: string;
   channel_id?: string | null;
   operation?: UsageOperation;
@@ -93,6 +95,56 @@ interface SupabaseUsageRow {
   cost?: number | string | null;
   usage?: OpenRouterUsage | null;
 }
+
+interface PostgresPoolLike {
+  query<T extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    values?: unknown[],
+  ): Promise<{ rows: T[]; rowCount: number | null }>;
+}
+
+function shouldUseSsl(databaseUrl: string | undefined) {
+  if (!databaseUrl) return false;
+  return !/(localhost|127\.0\.0\.1|railway\.internal)/i.test(databaseUrl);
+}
+
+const CREATE_USAGE_TABLE_SQL = `
+create table if not exists ai_audience_usage_events (
+  id uuid primary key,
+  created_at timestamptz not null default now(),
+  room_slug text not null,
+  channel_id text,
+  operation text not null check (operation in ('agent_decide', 'screenshot_summary')),
+  persona_key text,
+  model_provider text not null,
+  model_name text not null,
+  decision text,
+  has_screenshot boolean not null default false,
+  has_video boolean not null default false,
+  prompt_tokens integer not null default 0,
+  completion_tokens integer not null default 0,
+  total_tokens integer not null default 0,
+  cached_tokens integer not null default 0,
+  cache_write_tokens integer not null default 0,
+  audio_tokens integer not null default 0,
+  reasoning_tokens integer not null default 0,
+  cost numeric(20, 10) not null default 0,
+  usage jsonb not null default '{}'::jsonb
+);
+
+create index if not exists ai_audience_usage_created_idx
+  on ai_audience_usage_events(created_at desc);
+
+create index if not exists ai_audience_usage_room_created_idx
+  on ai_audience_usage_events(room_slug, created_at desc);
+
+create index if not exists ai_audience_usage_model_idx
+  on ai_audience_usage_events(model_name);
+
+create index if not exists ai_audience_usage_persona_idx
+  on ai_audience_usage_events(persona_key)
+  where persona_key is not null;
+`;
 
 function numeric(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -204,39 +256,17 @@ function summarizeEvents(events: AiUsageEvent[]): AiUsageSummary {
   };
 }
 
-function toSupabaseRow(event: AiUsageEvent): SupabaseUsageRow {
-  return {
-    id: event.id,
-    created_at: new Date(event.createdAt).toISOString(),
-    room_slug: event.roomSlug,
-    channel_id: event.channelId ?? null,
-    operation: event.operation,
-    persona_key: event.personaKey ?? null,
-    model_provider: event.modelProvider,
-    model_name: event.modelName,
-    decision: event.decision ?? null,
-    has_screenshot: event.hasScreenshot,
-    has_video: event.hasVideo,
-    prompt_tokens: numeric(event.usage.prompt_tokens),
-    completion_tokens: numeric(event.usage.completion_tokens),
-    total_tokens: numeric(event.usage.total_tokens),
-    cached_tokens: numeric(event.usage.prompt_tokens_details?.cached_tokens),
-    cache_write_tokens: numeric(
-      event.usage.prompt_tokens_details?.cache_write_tokens,
-    ),
-    audio_tokens: numeric(event.usage.prompt_tokens_details?.audio_tokens),
-    reasoning_tokens: numeric(
-      event.usage.completion_tokens_details?.reasoning_tokens,
-    ),
-    cost: numeric(event.usage.cost),
-    usage: event.usage,
-  };
-}
+function fromPostgresRow(row: PostgresUsageRow): AiUsageEvent {
+  const createdAt =
+    row.created_at instanceof Date
+      ? row.created_at.getTime()
+      : row.created_at
+        ? Date.parse(row.created_at)
+        : 0;
 
-function fromSupabaseRow(row: SupabaseUsageRow): AiUsageEvent {
   return {
     id: row.id ?? randomUUID(),
-    createdAt: row.created_at ? Date.parse(row.created_at) : 0,
+    createdAt,
     roomSlug: row.room_slug ?? "unknown",
     channelId: row.channel_id ?? undefined,
     operation: row.operation ?? "agent_decide",
@@ -306,20 +336,31 @@ export class InMemoryUsageRecorder implements UsageRecorder {
   }
 }
 
-export class SupabaseUsageRecorder implements UsageRecorder {
+export class PostgresUsageRecorder implements UsageRecorder {
   private readonly fallback: InMemoryUsageRecorder;
-  private readonly baseUrl: string;
+  private readonly pool: PostgresPoolLike;
+  private ensureSchemaPromise: Promise<void> | null = null;
 
   constructor(
     private readonly config: {
-      supabaseUrl: string;
-      serviceRoleKey: string;
-      fetchImpl?: typeof fetch;
+      databaseUrl?: string;
+      pool?: PostgresPoolLike;
       now?: () => number;
       maxEvents?: number;
     },
   ) {
-    this.baseUrl = `${config.supabaseUrl.replace(/\/$/, "")}/rest/v1/ai_audience_usage_events`;
+    if (!config.pool && !config.databaseUrl) {
+      throw new Error("PostgresUsageRecorder requires a databaseUrl or pool");
+    }
+
+    this.pool =
+      config.pool ??
+      new Pool({
+        connectionString: config.databaseUrl,
+        ssl: shouldUseSsl(config.databaseUrl)
+          ? { rejectUnauthorized: false }
+          : undefined,
+      });
     this.fallback = new InMemoryUsageRecorder(config.now, config.maxEvents);
   }
 
@@ -327,20 +368,58 @@ export class SupabaseUsageRecorder implements UsageRecorder {
     const event = this.fallback.record(input);
 
     try {
-      const response = await this.fetchImpl(this.baseUrl, {
-        method: "POST",
-        headers: this.headers({
-          "content-type": "application/json",
-          prefer: "return=minimal",
-        }),
-        body: JSON.stringify(toSupabaseRow(event)),
-      });
-
-      if (!response.ok) {
-        throw new Error(
-          `Supabase usage insert failed: ${response.status} ${await response.text()}`,
-        );
-      }
+      await this.ensureSchema();
+      await this.pool.query(
+        `
+insert into ai_audience_usage_events (
+  id,
+  created_at,
+  room_slug,
+  channel_id,
+  operation,
+  persona_key,
+  model_provider,
+  model_name,
+  decision,
+  has_screenshot,
+  has_video,
+  prompt_tokens,
+  completion_tokens,
+  total_tokens,
+  cached_tokens,
+  cache_write_tokens,
+  audio_tokens,
+  reasoning_tokens,
+  cost,
+  usage
+) values (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+)
+`,
+        [
+          event.id,
+          new Date(event.createdAt).toISOString(),
+          event.roomSlug,
+          event.channelId ?? null,
+          event.operation,
+          event.personaKey ?? null,
+          event.modelProvider,
+          event.modelName,
+          event.decision ?? null,
+          event.hasScreenshot,
+          event.hasVideo,
+          numeric(event.usage.prompt_tokens),
+          numeric(event.usage.completion_tokens),
+          numeric(event.usage.total_tokens),
+          numeric(event.usage.prompt_tokens_details?.cached_tokens),
+          numeric(event.usage.prompt_tokens_details?.cache_write_tokens),
+          numeric(event.usage.prompt_tokens_details?.audio_tokens),
+          numeric(event.usage.completion_tokens_details?.reasoning_tokens),
+          numeric(event.usage.cost),
+          event.usage,
+        ],
+      );
     } catch (error) {
       console.warn("ai audience usage persistence failed", {
         roomSlug: event.roomSlug,
@@ -356,22 +435,18 @@ export class SupabaseUsageRecorder implements UsageRecorder {
     const fallbackSummary = this.fallback.summary();
 
     try {
-      const response = await this.fetchImpl(
-        `${this.baseUrl}?select=*&order=created_at.desc&limit=${this.config.maxEvents ?? 5_000}`,
-        {
-          method: "GET",
-          headers: this.headers(),
-        },
+      await this.ensureSchema();
+      const result = await this.pool.query<PostgresUsageRow>(
+        `
+select *
+from ai_audience_usage_events
+order by created_at desc
+limit $1
+`,
+        [this.config.maxEvents ?? 5_000],
       );
 
-      if (!response.ok) {
-        throw new Error(
-          `Supabase usage summary failed: ${response.status} ${await response.text()}`,
-        );
-      }
-
-      const rows = (await response.json()) as SupabaseUsageRow[];
-      const events = rows.map(fromSupabaseRow).reverse();
+      const events = result.rows.map(fromPostgresRow).reverse();
       const persistedSummary = summarizeEvents(events);
       if (
         persistedSummary.totals.requests === 0 &&
@@ -389,29 +464,25 @@ export class SupabaseUsageRecorder implements UsageRecorder {
     }
   }
 
-  private get fetchImpl() {
-    return this.config.fetchImpl ?? fetch;
-  }
+  private async ensureSchema() {
+    this.ensureSchemaPromise ??= this.pool
+      .query(CREATE_USAGE_TABLE_SQL)
+      .then(() => undefined)
+      .catch((error) => {
+        this.ensureSchemaPromise = null;
+        throw error;
+      });
 
-  private headers(extra?: Record<string, string>) {
-    return {
-      apikey: this.config.serviceRoleKey,
-      authorization: `Bearer ${this.config.serviceRoleKey}`,
-      ...extra,
-    };
+    await this.ensureSchemaPromise;
   }
 }
 
 export function createUsageRecorder(config?: {
-  supabase?: {
-    url: string;
-    serviceRoleKey: string;
-  } | null;
+  databaseUrl?: string | null;
 }) {
-  if (config?.supabase) {
-    return new SupabaseUsageRecorder({
-      supabaseUrl: config.supabase.url,
-      serviceRoleKey: config.supabase.serviceRoleKey,
+  if (config?.databaseUrl) {
+    return new PostgresUsageRecorder({
+      databaseUrl: config.databaseUrl,
     });
   }
 
