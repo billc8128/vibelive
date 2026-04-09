@@ -116,6 +116,8 @@ export const en: Record<TranslationKey, string> = {
   "reaction.want_to_use": "Want to Use",
   "reaction.interesting": "Interesting",
   "reaction.looking_forward": "Looking Forward",
+  "reaction.mind_blown": "Mind Blown",
+  "reaction.big_brain": "Big Brain",
 
   // ── Profile Page ──────────────────────────
   "profile.tab.streams": "My Streams",

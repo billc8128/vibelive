@@ -114,6 +114,8 @@ export const zh = {
   "reaction.want_to_use": "想用",
   "reaction.interesting": "有趣",
   "reaction.looking_forward": "期待",
+  "reaction.mind_blown": "炸裂",
+  "reaction.big_brain": "高手",
 
   // ── Profile Page ──────────────────────────
   "profile.tab.streams": "我的直播",
