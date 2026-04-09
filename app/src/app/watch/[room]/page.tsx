@@ -16,6 +16,9 @@ import { useRouter } from "next/navigation";
 import { ChatMessageRow } from "@/components/watch/chat/ChatMessageRow";
 import { EmojiPicker } from "@/components/EmojiPicker";
 import { StickerPicker } from "@/components/StickerPicker";
+import { ProgressBar } from "@/components/ProgressBar";
+import { ToolBadge } from "@/components/ToolBadge";
+import type { CodingTool, ProjectStage } from "@/lib/types";
 import { isValidStickerId } from "@/lib/stickers";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -72,6 +75,47 @@ interface ChannelData {
 }
 
 const CHAT_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// ── Coding tool guard ─────────────────────────
+const CODING_TOOLS: CodingTool[] = [
+  "cursor",
+  "copilot",
+  "windsurf",
+  "claude-code",
+  "v0",
+  "bolt",
+  "replit",
+  "other",
+];
+function asCodingTool(value: string | null | undefined): CodingTool {
+  if (value && (CODING_TOOLS as string[]).includes(value)) {
+    return value as CodingTool;
+  }
+  return "other";
+}
+
+// ── Dev time formatter ────────────────────────
+function formatDevMinutes(min: number): string {
+  if (!Number.isFinite(min) || min < 0) return "0m";
+  const h = Math.floor(min / 60);
+  const m = Math.floor(min % 60);
+  if (h === 0) return `${m}m`;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+// ── Live elapsed minutes hook (refreshes every 30s) ─────
+function useElapsedMinutes(startedAt: string | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  if (!startedAt) return 0;
+  const startMs = new Date(startedAt).getTime();
+  if (Number.isNaN(startMs)) return 0;
+  return Math.max(0, Math.floor((now - startMs) / 60_000));
+}
 
 // ── Player Controls ──────────────────────────
 function PlayerControls({
@@ -268,9 +312,13 @@ function PlayerControls({
 function VideoArea({
   layoutMode,
   onLayoutChange,
+  devTimeLabel,
+  stages,
 }: {
   layoutMode: LayoutMode;
   onLayoutChange: (mode: LayoutMode) => void;
+  devTimeLabel: string;
+  stages: ProjectStage[];
 }) {
   // OBS via Ingress 推上来的 track 源是 Camera, 不是 ScreenShare.
   // 同时订阅两类源, 优先选浏览器模式的 ScreenShare, fallback 到 OBS 的 Camera.
@@ -320,11 +368,29 @@ function VideoArea({
             等待主播开始屏幕共享...
           </span>
         </div>
-        <div className="absolute top-3 left-3 z-20">
+        {/* HUD: top-left status, top-right dev time */}
+        <div className="absolute top-3 left-3 z-20 flex items-center gap-2">
+          <span className="viewer-badge text-[9px]">
+            <span className="live-dot inline-block w-2 h-2 rounded-full bg-white" />
+            LIVE
+          </span>
           <span className="hud-panel px-2 py-1 font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary">
             👁 {viewerCount}
           </span>
         </div>
+        <div className="absolute top-3 right-3 z-20">
+          <span className="hud-panel px-2 py-1 font-[family-name:var(--font-pixel)] text-[8px] text-accent-yellow">
+            ⏱ {devTimeLabel}
+          </span>
+        </div>
+        {/* Bottom progress overlay */}
+        {stages.length > 0 && (
+          <div className="absolute bottom-0 left-0 right-0 z-20">
+            <div className="bg-gradient-to-t from-bg-primary/90 to-transparent p-3 pt-8">
+              <ProgressBar stages={stages} compact />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -334,7 +400,7 @@ function VideoArea({
       <VideoTrack trackRef={screenTrack} className="w-full h-full object-contain" />
       {/* Face cam PiP — 主播脸的小窗, 右下角, 屏幕共享时才显示 */}
       {faceCamTrack && (
-        <div className="absolute bottom-3 right-3 z-30 w-32 sm:w-40 md:w-48 aspect-video pixel-border bg-bg-primary overflow-hidden shadow-lg pointer-events-none">
+        <div className="absolute bottom-16 right-3 z-30 w-32 sm:w-40 md:w-48 aspect-video pixel-border bg-bg-primary overflow-hidden shadow-lg pointer-events-none">
           <VideoTrack
             trackRef={faceCamTrack}
             className="w-full h-full object-cover"
@@ -345,8 +411,8 @@ function VideoArea({
         </div>
       )}
 
-      {/* HUD */}
-      <div className="absolute top-3 left-3 z-20 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* HUD: top-left LIVE + viewers (always visible) */}
+      <div className="absolute top-3 left-3 z-20 flex items-center gap-2">
         <span className="viewer-badge text-[9px]">
           <span className="live-dot inline-block w-2 h-2 rounded-full bg-white" />
           LIVE
@@ -356,7 +422,23 @@ function VideoArea({
         </span>
       </div>
 
-      {/* Player controls */}
+      {/* HUD: top-right dev time (always visible) */}
+      <div className="absolute top-3 right-3 z-20">
+        <span className="hud-panel px-2 py-1 font-[family-name:var(--font-pixel)] text-[8px] text-accent-yellow">
+          ⏱ {devTimeLabel}
+        </span>
+      </div>
+
+      {/* Bottom progress bar overlay (always visible, sits above hover-only player controls) */}
+      {stages.length > 0 && (
+        <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none group-hover:opacity-0 transition-opacity">
+          <div className="bg-gradient-to-t from-bg-primary/90 to-transparent p-3 pt-8">
+            <ProgressBar stages={stages} compact />
+          </div>
+        </div>
+      )}
+
+      {/* Player controls (hover) */}
       <PlayerControls
         videoRef={videoRef}
         layoutMode={layoutMode}
@@ -366,7 +448,7 @@ function VideoArea({
   );
 }
 
-// ── Sidebar (Chat / Info / Users tabs) ───────
+// ── Stage data (used by sidebar editor + ProgressBar synthesizer) ──
 const STAGES_DATA = [
   { value: "构思中", labelKey: "goLive.stage.idea" },
   { value: "设计中", labelKey: "goLive.stage.design" },
@@ -377,7 +459,26 @@ const STAGES_DATA = [
   { value: "已完成", labelKey: "goLive.stage.done" },
 ];
 
-function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
+// Map a single stage string into a 7-step ProjectStage[] for ProgressBar.
+// Stages strictly before the current one are completed; "已完成" marks all done.
+function useSynthesizedStages(currentStage: string | null | undefined): ProjectStage[] {
+  const { t } = useI18n();
+  const idx = STAGES_DATA.findIndex((s) => s.value === currentStage);
+  return STAGES_DATA.map((s, i) => ({
+    name: t(s.labelKey as TranslationKey),
+    completed: idx === STAGES_DATA.length - 1 ? true : i < idx,
+  }));
+}
+
+// ── Live Chat Panel (single panel, mock-style) ──────────
+// Wraps all the LiveKit data-channel chat (text + stickers + emoji)
+// in a single header/messages/input layout matching components/ChatPanel.
+function LiveChatPanel({
+  viewerName,
+  roomName,
+  aiAudienceEnabled,
+  streamStartedAt,
+}: {
   viewerName: string;
   roomName: string;
   aiAudienceEnabled: boolean;
@@ -385,31 +486,32 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
 }) {
   const { t } = useI18n();
   const room = useRoomContext();
-  const participants = useParticipants();
-  // 见 isViewerParticipant: 排除主播/OBS ingress, AI audience bot, hover 预览.
-  const viewers = participants.filter(isViewerParticipant);
-  const [tab, setTab] = useState<"chat" | "info" | "users">("chat");
   const decodedRoom = decodeURIComponent(roomName);
   const chatStorageKey = `vibelive-chat-${decodedRoom}`;
-  const [messages, setMessages] = useState<ChatTimelineMessage[]>([]);
+  // Lazy init from localStorage. ConnectedRoom only mounts this once per
+  // session (chatStorageKey + streamStartedAt are stable post-mount because
+  // the parent guards on `liveStream` being non-null), so a one-shot restore
+  // is safe and avoids a setState-in-effect lint violation.
+  const [messages, setMessages] = useState<ChatTimelineMessage[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(chatStorageKey);
+      return restoreChatTimeline({
+        raw,
+        sessionStartedAt: streamStartedAt,
+        ttlMs: CHAT_TTL_MS,
+      }).slice(-200);
+    } catch {
+      return [];
+    }
+  });
   const [input, setInput] = useState("");
-  const [streamInfo, setStreamInfo] = useState<{
-    project_name?: string; description?: string; stage?: string; streamer_name?: string; started_at?: string; user_id?: string;
-  } | null>(null);
-  const [isStreamer, setIsStreamer] = useState(false);
-  const [isFollowing, setIsFollowing] = useState(false);
-  const [isFavorited, setIsFavorited] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [ending, setEnding] = useState(false);
-  const [showEndConfirm, setShowEndConfirm] = useState(false);
-  const router = useRouter();
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Chat input — emoji + sticker picker integration
   const chatInputRef = useRef<HTMLInputElement>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [stickerOpen, setStickerOpen] = useState(false);
+
   const insertEmoji = useCallback((emoji: string) => {
     const el = chatInputRef.current;
     if (!el) {
@@ -420,7 +522,6 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
     const end = el.selectionEnd ?? el.value.length;
     const newValue = el.value.slice(0, start) + emoji + el.value.slice(end);
     setInput(newValue);
-    // Restore caret position to just after the inserted emoji
     requestAnimationFrame(() => {
       el.focus();
       const pos = start + emoji.length;
@@ -428,66 +529,7 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
     });
   }, []);
 
-  // Debounced save for streamer editing
-  const saveField = useCallback(
-    (fields: Record<string, string>) => {
-      if (!isStreamer) return;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(async () => {
-        setSaving(true);
-        await fetch("/api/streams", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room_name: decodedRoom, ...fields }),
-        }).catch(() => {});
-        setSaving(false);
-      }, 600);
-    },
-    [decodedRoom, isStreamer]
-  );
-
-  const updateField = (key: string, value: string) => {
-    setStreamInfo((prev) => (prev ? { ...prev, [key]: value } : prev));
-    saveField({ [key]: value });
-  };
-
-  // Fetch stream info + check if current user is the streamer
-  useEffect(() => {
-    const fetchInfo = async () => {
-      try {
-        const res = await fetch("/api/streams");
-        if (res.ok) {
-          const { streams } = await res.json();
-          const match = streams.find((s: { room_name: string }) => s.room_name === decodedRoom);
-          if (match) {
-            setStreamInfo(match);
-            // Check ownership via Supabase
-            if (match.user_id) {
-              const supabase = createClient();
-              if (supabase) {
-                const { data } = await supabase.auth.getUser();
-                const isOwner = data.user?.id === match.user_id;
-                setIsStreamer(isOwner);
-
-                // Check follow/favorite status
-                if (data.user && !isOwner) {
-                  fetch(`/api/follows?following_id=${match.user_id}`)
-                    .then(r => r.json()).then(d => setIsFollowing(d.isFollowing)).catch(() => {});
-                  fetch(`/api/favorites?room_name=${encodeURIComponent(decodedRoom)}`)
-                    .then(r => r.json()).then(d => setIsFavorited(d.isFavorited)).catch(() => {});
-                }
-              }
-            }
-          }
-        }
-      } catch {}
-    };
-    fetchInfo();
-    const interval = setInterval(fetchInfo, 15000);
-    return () => clearInterval(interval);
-  }, [decodedRoom]);
-
-  // Data channel messages — skip messages from self (already added locally in sendChat/sendSticker)
+  // Data channel — skip self-echo (we add locally in send*)
   useEffect(() => {
     const handleData = (payload: Uint8Array, participant?: { identity: string }) => {
       if (participant?.identity === room.localParticipant.identity) return;
@@ -506,8 +548,6 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
           },
         ]);
       } else if (msg.type === "sticker") {
-        // Drop unknown sticker IDs — defends against future-version peers
-        // sending stickers we don't have files for
         if (!isValidStickerId(msg.stickerId)) return;
         setMessages((prev) => [
           ...prev.slice(-200),
@@ -522,26 +562,13 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
       }
     };
     room.on(RoomEvent.DataReceived, handleData);
-    return () => { room.off(RoomEvent.DataReceived, handleData); };
+    return () => {
+      room.off(RoomEvent.DataReceived, handleData);
+    };
   }, [room]);
 
-  // Persist messages to localStorage (keep only last 10 min)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(chatStorageKey);
-      setMessages(
-        restoreChatTimeline({
-          raw,
-          sessionStartedAt: streamStartedAt,
-          ttlMs: CHAT_TTL_MS,
-        }).slice(-200),
-      );
-    } catch {
-      setMessages([]);
-    }
-  }, [chatStorageKey, streamStartedAt]);
-
+  // Persist chat to localStorage (10 min TTL). Restore happens via useState
+  // lazy init above, so this effect is write-only.
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -584,8 +611,6 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
     setInput("");
   };
 
-  // Sticker send: standalone message, no text input — Discord pattern.
-  // Picker calls this and immediately closes itself (handled in StickerPicker).
   const sendSticker = (stickerId: string) => {
     if (!isValidStickerId(stickerId)) return;
     const payload = encodeRoomDataMessage({
@@ -615,6 +640,248 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
     }
   };
 
+  const formatTime = (ts: number) => {
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+
+  return (
+    <div className="flex flex-col h-full hud-panel overflow-hidden">
+      {/* Header — matches components/ChatPanel */}
+      <div className="border-b border-border-pixel/50 px-3 py-2 flex items-center justify-between shrink-0">
+        <span className="font-[family-name:var(--font-pixel)] text-[9px] text-accent-green glow-green">
+          ◈ {t('watch.tabChat')}
+        </span>
+        <span className="font-[family-name:var(--font-pixel)] text-[7px] text-text-secondary">
+          {messages.length} 条
+        </span>
+      </div>
+
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2 min-h-0">
+        {messages.length === 0 && (
+          <p className="text-xs text-text-secondary/40 text-center py-8">
+            还没有消息，说点什么吧
+          </p>
+        )}
+        {messages.map((msg) => (
+          <ChatMessageRow
+            key={msg.id}
+            message={msg}
+            timestampLabel={formatTime(msg.time)}
+          />
+        ))}
+      </div>
+
+      {/* Input */}
+      <div className="px-3 py-2 border-t border-border-pixel/50 shrink-0">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendChat();
+          }}
+          className="flex gap-2 items-stretch"
+        >
+          <input
+            ref={chatInputRef}
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={t('chat.placeholder')}
+            className="flex-1 min-w-0 bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-cyan focus:outline-none"
+          />
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setEmojiOpen((v) => !v);
+                setStickerOpen(false);
+              }}
+              className={`h-full px-2 border text-base leading-none transition-colors ${
+                emojiOpen
+                  ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
+                  : "border-border-pixel text-text-secondary hover:text-accent-cyan hover:border-accent-cyan/60"
+              }`}
+              title="Emoji"
+              aria-label="Open emoji picker"
+            >
+              😀
+            </button>
+            {emojiOpen && (
+              <EmojiPicker onSelect={insertEmoji} onClose={() => setEmojiOpen(false)} />
+            )}
+          </div>
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setStickerOpen((v) => !v);
+                setEmojiOpen(false);
+              }}
+              className={`h-full px-2 border text-base leading-none transition-colors ${
+                stickerOpen
+                  ? "border-accent-pink text-accent-pink bg-accent-pink/10"
+                  : "border-border-pixel text-text-secondary hover:text-accent-pink hover:border-accent-pink/60"
+              }`}
+              title="Sticker"
+              aria-label="Open sticker picker"
+            >
+              🖼️
+            </button>
+            {stickerOpen && (
+              <StickerPicker onSelect={sendSticker} onClose={() => setStickerOpen(false)} />
+            )}
+          </div>
+          <button
+            type="submit"
+            className="shrink-0 px-3 py-1.5 bg-accent-cyan/20 border border-accent-cyan/40 text-accent-cyan text-xs hover:bg-accent-cyan/30 transition-colors"
+          >
+            {t('chat.send')}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Connected Room (mock-style layout for joined viewer) ──
+// Replaces the previous WatchLayout (theater/default/mobile) + Sidebar tabs.
+// Renders: top bar + main flex (video + cards | chat sidebar).
+function ConnectedRoom({
+  channelData,
+  identity,
+  roomName,
+  aiAudienceEnabled,
+}: {
+  channelData: ChannelData;
+  identity: string;
+  roomName: string;
+  aiAudienceEnabled: boolean;
+}) {
+  const { t } = useI18n();
+  const router = useRouter();
+  const decodedRoom = decodeURIComponent(roomName);
+  const streamStartedAt = channelData.liveStream?.started_at ?? null;
+  const elapsedMin = useElapsedMinutes(streamStartedAt);
+  const devTimeLabel = formatDevMinutes(elapsedMin);
+
+  // Editable channel state — initialized from channelData, may diverge during edit.
+  // savingRef guards against the 15s parent poll stomping in-flight typed values.
+  const [projectName, setProjectName] = useState(channelData.channel.project_name || "");
+  const [projectDesc, setProjectDesc] = useState(channelData.channel.project_desc || "");
+  const [projectStage, setProjectStage] = useState(
+    channelData.channel.project_stage || "构思中",
+  );
+  const savingRef = useRef(false);
+  useEffect(() => {
+    if (savingRef.current) return;
+    setProjectName(channelData.channel.project_name || "");
+    setProjectDesc(channelData.channel.project_desc || "");
+    setProjectStage(channelData.channel.project_stage || "构思中");
+  }, [
+    channelData.channel.project_name,
+    channelData.channel.project_desc,
+    channelData.channel.project_stage,
+  ]);
+
+  const stages = useSynthesizedStages(projectStage);
+  const codingTool = asCodingTool(channelData.channel.coding_tool);
+
+  // Streamer detection + follow / favorite state
+  const [isStreamer, setIsStreamer] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [isFavorited, setIsFavorited] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [ending, setEnding] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true);
+
+  useEffect(() => {
+    const supabase = createClient();
+    if (!supabase) return;
+    let cancelled = false;
+    supabase.auth.getUser().then(({ data }) => {
+      if (cancelled || !data.user) return;
+      const owner = data.user.id === channelData.channel.user_id;
+      setIsStreamer(owner);
+      if (!owner) {
+        fetch(`/api/follows?following_id=${channelData.channel.user_id}`)
+          .then((r) => r.json())
+          .then((d) => setIsFollowing(!!d.isFollowing))
+          .catch(() => {});
+        fetch(`/api/favorites?room_name=${encodeURIComponent(decodedRoom)}`)
+          .then((r) => r.json())
+          .then((d) => setIsFavorited(!!d.isFavorited))
+          .catch(() => {});
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelData.channel.user_id, decodedRoom]);
+
+  // Debounced save for inline edit (PATCH /api/streams updates both
+  // live_streams + channels rows; the parent's 15s poll will eventually
+  // refresh channelData with the new values).
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveField = useCallback(
+    (fields: Record<string, string>) => {
+      if (!isStreamer) return;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      savingRef.current = true;
+      saveTimerRef.current = setTimeout(async () => {
+        setSaving(true);
+        try {
+          await fetch("/api/streams", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ room_name: decodedRoom, ...fields }),
+          });
+        } catch {}
+        setSaving(false);
+        savingRef.current = false;
+      }, 600);
+    },
+    [decodedRoom, isStreamer],
+  );
+
+  const onProjectNameChange = (v: string) => {
+    setProjectName(v);
+    saveField({ project_name: v });
+  };
+  const onProjectDescChange = (v: string) => {
+    setProjectDesc(v);
+    saveField({ description: v });
+  };
+  const onStageChange = (v: string) => {
+    setProjectStage(v);
+    saveField({ stage: v });
+  };
+
+  const toggleFollow = async () => {
+    const method = isFollowing ? "DELETE" : "POST";
+    const res = await fetch("/api/follows", {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ following_id: channelData.channel.user_id }),
+    });
+    if (res.ok) setIsFollowing(!isFollowing);
+  };
+
+  const toggleFavorite = async () => {
+    const method = isFavorited ? "DELETE" : "POST";
+    const res = await fetch("/api/favorites", {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        room_name: decodedRoom,
+        stream_title: projectName || channelData.profile?.display_name || "",
+        streamer_name: channelData.profile?.display_name || "",
+      }),
+    });
+    if (res.ok) setIsFavorited(!isFavorited);
+  };
+
   const endStream = async () => {
     setEnding(true);
     try {
@@ -624,9 +891,7 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
         body: JSON.stringify({ room_name: decodedRoom }),
       });
       if (!res.ok) throw new Error();
-      // Clean up go-live localStorage so it doesn't try to reconnect
       localStorage.removeItem("vibelive_active_stream");
-      // Server-side DELETE also removes the LiveKit room, disconnecting all participants
       router.push("/");
     } catch {
       setEnding(false);
@@ -634,415 +899,288 @@ function Sidebar({ viewerName, roomName, aiAudienceEnabled, streamStartedAt }: {
     }
   };
 
-  const formatTime = (ts: number) => {
-    const d = new Date(ts);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  };
-
-  const tabs = [
-    { key: "chat" as const, label: t('watch.tabChat'), icon: "💬" },
-    { key: "info" as const, label: t('watch.tabProject'), icon: "◈" },
-    { key: "users" as const, label: `${t('watch.online')} ${viewers.length}`, icon: "◉" },
-  ];
+  const profile = channelData.profile;
+  const displayName = profile?.display_name || channelData.channel.slug;
+  const projectUrl = channelData.channel.project_url;
 
   return (
-    <div className="flex flex-col h-full pixel-border bg-bg-card">
-      {/* Tabs */}
-      <div className="flex border-b border-border-pixel/50 shrink-0">
-        {tabs.map((tb) => (
-          <button
-            key={tb.key}
-            onClick={() => setTab(tb.key)}
-            className={`flex-1 px-2 py-2 text-[10px] font-[family-name:var(--font-pixel)] transition-colors ${
-              tab === tb.key
-                ? "text-accent-cyan border-b-2 border-accent-cyan"
-                : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            <span className="mr-1">{tb.icon}</span>{tb.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Chat Tab ── */}
-      {tab === "chat" && (
-        <>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2 min-h-0">
-            {messages.length === 0 && (
-              <p className="text-xs text-text-secondary/40 text-center py-8">还没有消息，说点什么吧</p>
-            )}
-            {messages.map((msg) => (
-              <ChatMessageRow
-                key={msg.id}
-                message={msg}
-                timestampLabel={formatTime(msg.time)}
-              />
-            ))}
-          </div>
-
-          <div className="px-3 py-2 border-t border-border-pixel/50 shrink-0">
-            <form onSubmit={(e) => { e.preventDefault(); sendChat(); }} className="flex gap-2 items-stretch">
-              <input
-                ref={chatInputRef}
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={t('chat.placeholder')}
-                className="flex-1 min-w-0 bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-cyan focus:outline-none"
-              />
-              {/* Emoji picker trigger + popover (Discord-style) */}
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={() => { setEmojiOpen((v) => !v); setStickerOpen(false); }}
-                  className={`h-full px-2 border text-base leading-none transition-colors ${
-                    emojiOpen
-                      ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
-                      : "border-border-pixel text-text-secondary hover:text-accent-cyan hover:border-accent-cyan/60"
-                  }`}
-                  title="Emoji"
-                  aria-label="Open emoji picker"
-                >
-                  😀
-                </button>
-                {emojiOpen && (
-                  <EmojiPicker
-                    onSelect={insertEmoji}
-                    onClose={() => setEmojiOpen(false)}
-                  />
-                )}
-              </div>
-              {/* Sticker picker trigger + popover */}
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={() => { setStickerOpen((v) => !v); setEmojiOpen(false); }}
-                  className={`h-full px-2 border text-base leading-none transition-colors ${
-                    stickerOpen
-                      ? "border-accent-pink text-accent-pink bg-accent-pink/10"
-                      : "border-border-pixel text-text-secondary hover:text-accent-pink hover:border-accent-pink/60"
-                  }`}
-                  title="Sticker"
-                  aria-label="Open sticker picker"
-                >
-                  🖼️
-                </button>
-                {stickerOpen && (
-                  <StickerPicker
-                    onSelect={sendSticker}
-                    onClose={() => setStickerOpen(false)}
-                  />
-                )}
-              </div>
-              <button
-                type="submit"
-                className="shrink-0 px-3 py-1.5 bg-accent-cyan/20 border border-accent-cyan/40 text-accent-cyan text-xs hover:bg-accent-cyan/30 transition-colors"
-              >
-                {t('chat.send')}
-              </button>
-            </form>
-          </div>
-        </>
-      )}
-
-      {/* ── Info Tab ── */}
-      {tab === "info" && (
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
-          {streamInfo ? (
-            <>
-              {/* Streamer management panel */}
-              {isStreamer && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-[family-name:var(--font-pixel)] text-[7px] text-accent-green bg-accent-green/10 border border-accent-green/30 px-2 py-0.5">
-                      主播模式 · 可编辑
-                    </span>
-                    {saving && (
-                      <span className="font-[family-name:var(--font-pixel)] text-[7px] text-accent-yellow animate-pulse ml-auto">保存中...</span>
-                    )}
-                  </div>
-                  {/* Stream controls */}
-                  <div className="flex gap-2">
-                    <Link
-                      href="/go-live"
-                      className="flex-1 text-center py-1.5 text-[10px] font-[family-name:var(--font-pixel)] border border-accent-cyan/40 text-accent-cyan hover:bg-accent-cyan/10 transition-colors"
-                    >
-                      {t('goLive.title')}
-                    </Link>
-                    {!showEndConfirm ? (
-                      <button
-                        onClick={() => setShowEndConfirm(true)}
-                        className="flex-1 py-1.5 text-[10px] font-[family-name:var(--font-pixel)] border border-accent-pink/40 text-accent-pink hover:bg-accent-pink/10 transition-colors"
-                      >
-                        下播
-                      </button>
-                    ) : (
-                      <div className="flex-1 flex gap-1">
-                        <button
-                          onClick={endStream}
-                          disabled={ending}
-                          className="flex-1 py-1.5 text-[10px] font-[family-name:var(--font-pixel)] bg-accent-pink/20 border border-accent-pink text-accent-pink hover:bg-accent-pink hover:text-white transition-colors disabled:opacity-50"
-                        >
-                          {ending ? t('btn.ending') : t('btn.confirmEnd')}
-                        </button>
-                        <button
-                          onClick={() => setShowEndConfirm(false)}
-                          className="px-2 py-1.5 text-[10px] font-[family-name:var(--font-pixel)] border border-border-pixel text-text-secondary hover:text-text-primary transition-colors"
-                        >
-                          取消
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Project name */}
-              <div>
-                <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary">{t('goLive.projectName')}</span>
-                {isStreamer ? (
-                  <input
-                    type="text"
-                    value={streamInfo.project_name || ""}
-                    onChange={(e) => updateField("project_name", e.target.value)}
-                    placeholder={t('goLive.projectQuestion')}
-                    className="w-full mt-1 bg-bg-primary border border-border-pixel px-2 py-1.5 text-sm text-text-primary placeholder:text-text-secondary/30 focus:border-accent-purple focus:outline-none transition-colors"
-                  />
-                ) : (
-                  <p className="text-sm text-text-primary mt-1">
-                    {streamInfo.project_name || <span className="text-text-secondary/40">未设置</span>}
-                  </p>
-                )}
-              </div>
-
-              {/* Stage */}
-              <div>
-                <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary">{t('goLive.projectStage')}</span>
-                {isStreamer ? (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {STAGES_DATA.map((s) => (
-                      <button
-                        key={s.value}
-                        onClick={() => updateField("stage", s.value)}
-                        className={`px-1.5 py-0.5 text-[10px] border transition-colors ${
-                          streamInfo.stage === s.value
-                            ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
-                            : "border-border-pixel text-text-secondary hover:border-text-secondary"
-                        }`}
-                      >
-                        {t(s.labelKey as TranslationKey)}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-1">
-                    <span className="px-2 py-0.5 text-xs border border-accent-cyan/40 text-accent-cyan bg-accent-cyan/10">
-                      {(() => {
-                        const stageValue = streamInfo.stage || "构思中";
-                        const match = STAGES_DATA.find(s => s.value === stageValue);
-                        return match ? t(match.labelKey as TranslationKey) : stageValue;
-                      })()}
-                    </span>
-                  </p>
-                )}
-              </div>
-
-              {/* Description */}
-              <div>
-                <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary">{t('goLive.projectDesc')}</span>
-                {isStreamer ? (
-                  <textarea
-                    value={streamInfo.description || ""}
-                    onChange={(e) => updateField("description", e.target.value)}
-                    placeholder={t('goLive.projectDescPlaceholder')}
-                    rows={4}
-                    className="w-full mt-1 bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-purple focus:outline-none transition-colors resize-none"
-                  />
-                ) : (
-                  <p className="text-xs text-text-primary/80 mt-1 leading-relaxed whitespace-pre-wrap">
-                    {streamInfo.description || <span className="text-text-secondary/40">主播还没写描述</span>}
-                  </p>
-                )}
-              </div>
-
-              <div className="border-t border-border-pixel/30 pt-3">
-                <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary">{t('stream.streamer')}</span>
-                <p className="text-sm text-accent-purple mt-1">{streamInfo.streamer_name}</p>
-              </div>
-              {streamInfo.started_at && (
-                <div>
-                  <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary">开播时间</span>
-                  <p className="text-xs text-text-secondary mt-1">
-                    {new Date(streamInfo.started_at).toLocaleString("zh-CN")}
-                  </p>
-                </div>
-              )}
-
-              {/* Follow + Favorite buttons */}
-              {!isStreamer && streamInfo.user_id && (
-                <div className="border-t border-border-pixel/30 pt-3 flex gap-2">
-                  <button
-                    onClick={async () => {
-                      const method = isFollowing ? "DELETE" : "POST";
-                      const res = await fetch("/api/follows", {
-                        method,
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ following_id: streamInfo.user_id }),
-                      });
-                      if (res.ok) setIsFollowing(!isFollowing);
-                    }}
-                    className={`flex-1 py-1.5 text-[10px] font-[family-name:var(--font-pixel)] border transition-colors ${
-                      isFollowing
-                        ? "border-text-secondary text-text-secondary bg-bg-surface"
-                        : "border-accent-pink text-accent-pink hover:bg-accent-pink hover:text-white"
-                    }`}
-                  >
-                    {isFollowing ? t('btn.following') : t('btn.follow')}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const method = isFavorited ? "DELETE" : "POST";
-                      const res = await fetch("/api/favorites", {
-                        method,
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          room_name: decodedRoom,
-                          stream_title: streamInfo.project_name || streamInfo.streamer_name,
-                          streamer_name: streamInfo.streamer_name,
-                        }),
-                      });
-                      if (res.ok) setIsFavorited(!isFavorited);
-                    }}
-                    className={`flex-1 py-1.5 text-[10px] font-[family-name:var(--font-pixel)] border transition-colors ${
-                      isFavorited
-                        ? "border-accent-yellow text-bg-primary bg-accent-yellow"
-                        : "border-accent-yellow text-accent-yellow hover:bg-accent-yellow hover:text-bg-primary"
-                    }`}
-                  >
-                    {isFavorited ? t('btn.favorited') : t('btn.favorite')}
-                  </button>
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-text-secondary/40 text-center py-8">加载中...</p>
-          )}
-        </div>
-      )}
-
-      {/* ── Users Tab ── */}
-      {/* 只列出真正的观众 — 主播 / OBS 推流端不在这里展示, 它们的"在线"状态
-          通过视频是否在播放体现 */}
-      {tab === "users" && (
-        <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1 min-h-0">
-          {viewers.length === 0 && (
-            <p className="text-xs text-text-secondary/40 text-center py-8">
-              还没有观众
-            </p>
-          )}
-          {viewers.map((p) => (
-            <div
-              key={p.identity}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-bg-surface/50 transition-colors"
+    <div className="flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-[1400px] px-4 py-3">
+        {/* ── Top Bar ─────────────────────────── */}
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link
+              href="/"
+              className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary hover:text-accent-cyan transition-colors shrink-0"
             >
-              <span className="w-2 h-2 rounded-full shrink-0 bg-accent-cyan" />
-              <span className="text-xs text-text-primary truncate flex-1">
-                {/* identity 是 `viewer-<nick>-<rand>` 的去重 ID,显示用 name */}
-                {p.name || p.identity}
+              ◁ {t('nav.backToHome')}
+            </Link>
+            <span className="text-border-pixel shrink-0">│</span>
+            <h1 className="font-[family-name:var(--font-pixel)] text-[12px] text-text-primary glitch-hover truncate">
+              {projectName || displayName}
+            </h1>
+            <ToolBadge tool={codingTool} />
+            {saving && (
+              <span className="font-[family-name:var(--font-pixel)] text-[7px] text-accent-yellow animate-pulse">
+                保存中...
               </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setChatOpen(!chatOpen)}
+              className={`pixel-btn text-[8px] ${
+                chatOpen
+                  ? "border-accent-cyan text-accent-cyan"
+                  : "border-border-pixel text-text-secondary"
+              }`}
+            >
+              💬 {chatOpen ? t('stream.hideChat') : t('stream.showChat')}
+            </button>
+            {isStreamer ? (
+              !showEndConfirm ? (
+                <>
+                  <Link
+                    href="/go-live"
+                    className="pixel-btn text-[8px] border-accent-cyan text-accent-cyan hover:bg-accent-cyan hover:text-bg-primary"
+                  >
+                    {t('goLive.title')}
+                  </Link>
+                  <button
+                    onClick={() => setShowEndConfirm(true)}
+                    className="pixel-btn text-[8px] border-accent-pink text-accent-pink hover:bg-accent-pink hover:text-white"
+                  >
+                    下播
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={endStream}
+                    disabled={ending}
+                    className="pixel-btn text-[8px] bg-accent-pink/20 border-accent-pink text-accent-pink disabled:opacity-50"
+                  >
+                    {ending ? t('btn.ending') : t('btn.confirmEnd')}
+                  </button>
+                  <button
+                    onClick={() => setShowEndConfirm(false)}
+                    className="pixel-btn text-[8px] border-border-pixel text-text-secondary"
+                  >
+                    取消
+                  </button>
+                </>
+              )
+            ) : (
+              <button
+                onClick={toggleFavorite}
+                className={`pixel-btn text-[8px] ${
+                  isFavorited
+                    ? "border-accent-yellow text-bg-primary bg-accent-yellow"
+                    : "border-accent-yellow text-accent-yellow"
+                }`}
+              >
+                {isFavorited ? t('btn.favorited') : t('btn.favorite')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Main Layout ─────────────────────── */}
+        <div className="flex gap-4">
+          {/* Video + Info Area */}
+          <div className="flex-1 min-w-0 space-y-4">
+            {/* Video */}
+            <div className="relative pixel-border-live aspect-video bg-bg-primary overflow-hidden">
+              <VideoArea
+                layoutMode="default"
+                onLayoutChange={() => {}}
+                devTimeLabel={devTimeLabel}
+                stages={stages}
+              />
             </div>
-          ))}
+
+            {/* Project Info + Streamer Card */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Project Info */}
+              <div className="pixel-border bg-bg-card p-4 space-y-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-purple">
+                    ◈
+                  </span>
+                  <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
+                    {t('stream.projectInfo')}
+                  </span>
+                </div>
+
+                {isStreamer ? (
+                  <>
+                    <input
+                      type="text"
+                      value={projectName}
+                      onChange={(e) => onProjectNameChange(e.target.value)}
+                      placeholder={t('goLive.projectQuestion')}
+                      className="w-full bg-bg-primary border border-border-pixel px-2 py-1.5 text-sm text-text-primary placeholder:text-text-secondary/30 focus:border-accent-purple focus:outline-none"
+                    />
+                    <textarea
+                      value={projectDesc}
+                      onChange={(e) => onProjectDescChange(e.target.value)}
+                      placeholder={t('goLive.projectDescPlaceholder')}
+                      rows={3}
+                      className="w-full bg-bg-primary border border-border-pixel px-2 py-1.5 text-xs text-text-primary placeholder:text-text-secondary/30 focus:border-accent-purple focus:outline-none resize-none"
+                    />
+                  </>
+                ) : (
+                  <p className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap">
+                    {projectDesc || (
+                      <span className="text-text-secondary/40">主播还没写描述</span>
+                    )}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="pixel-tag text-accent-cyan border-accent-cyan/30">
+                    #{(() => {
+                      const match = STAGES_DATA.find((s) => s.value === projectStage);
+                      return match ? t(match.labelKey as TranslationKey) : projectStage;
+                    })()}
+                  </span>
+                </div>
+
+                {projectUrl && (
+                  <a
+                    href={projectUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-xs text-accent-green hover:underline mt-2 truncate"
+                  >
+                    🔗 {projectUrl}
+                  </a>
+                )}
+              </div>
+
+              {/* Streamer Card */}
+              <div className="pixel-border bg-bg-card p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-pink">
+                    ◈
+                  </span>
+                  <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
+                    {t('stream.streamer')}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 bg-bg-surface border-2 border-border-pixel shrink-0 overflow-hidden">
+                    {profile?.avatar_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={profile.avatar_url}
+                        alt={displayName}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span className="flex items-center justify-center w-full h-full font-[family-name:var(--font-pixel)] text-lg text-accent-purple">
+                        {displayName.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-text-primary truncate">
+                      {displayName}
+                    </h3>
+                    {profile?.bio && (
+                      <p className="text-xs text-text-secondary mt-0.5 line-clamp-2">
+                        {profile.bio}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border-pixel/50">
+                  <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary">
+                    {profile?.followers_count ?? 0} {t('profile.followers')}
+                  </span>
+                  <div className="flex-1" />
+                  {!isStreamer && (
+                    <button
+                      onClick={toggleFollow}
+                      className={`pixel-btn text-[8px] ${
+                        isFollowing
+                          ? "border-text-secondary text-text-secondary bg-bg-surface"
+                          : "border-accent-pink text-accent-pink hover:bg-accent-pink hover:text-white"
+                      }`}
+                    >
+                      {isFollowing ? t('btn.following') : t('btn.follow')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Progress Detail */}
+            <div className="pixel-border bg-bg-card p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-green">
+                  ◈
+                </span>
+                <span className="font-[family-name:var(--font-pixel)] text-[9px] text-text-secondary">
+                  {t('stream.progress')}
+                </span>
+                <div className="flex-1" />
+                <span className="font-[family-name:var(--font-pixel)] text-[8px] text-accent-yellow">
+                  ⏱ 累计 {devTimeLabel}
+                </span>
+              </div>
+              <ProgressBar stages={stages} />
+              {isStreamer && (
+                <div className="mt-3 flex flex-wrap gap-1">
+                  {STAGES_DATA.map((s) => (
+                    <button
+                      key={s.value}
+                      onClick={() => onStageChange(s.value)}
+                      className={`px-1.5 py-0.5 text-[10px] border transition-colors ${
+                        projectStage === s.value
+                          ? "border-accent-cyan text-accent-cyan bg-accent-cyan/10"
+                          : "border-border-pixel text-text-secondary hover:border-text-secondary"
+                      }`}
+                    >
+                      {t(s.labelKey as TranslationKey)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Chat sidebar — sticky desktop only, matches mock.
+              top-14 clears the global Navbar (h-12 = 48px sticky top-0). */}
+          {chatOpen && (
+            <div className="w-[340px] shrink-0 hidden lg:block">
+              <div className="sticky top-14 h-[calc(100vh-72px)]">
+                <LiveChatPanel
+                  viewerName={identity}
+                  roomName={roomName}
+                  aiAudienceEnabled={aiAudienceEnabled}
+                  streamStartedAt={streamStartedAt}
+                />
+              </div>
+            </div>
+          )}
         </div>
-      )}
 
-    </div>
-  );
-}
-
-// ── Watch Layout (handles desktop/mobile) ────
-function WatchLayout({
-  layoutMode, onLayoutChange, mobilePanel, onMobilePanelChange, identity, roomName,
-  aiAudienceEnabled,
-  streamStartedAt,
-}: {
-  layoutMode: LayoutMode;
-  onLayoutChange: (m: LayoutMode) => void;
-  mobilePanel: "video" | "chat";
-  onMobilePanelChange: (p: "video" | "chat") => void;
-  identity: string;
-  roomName: string;
-  aiAudienceEnabled: boolean;
-  streamStartedAt: string | null;
-}) {
-  const { t } = useI18n();
-  const [desktop, setDesktop] = useState(false);
-
-  useEffect(() => {
-    const check = () => setDesktop(window.innerWidth >= 1024);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
-
-  const sidebarProps = {
-    viewerName: identity,
-    roomName,
-    aiAudienceEnabled,
-    streamStartedAt,
-  };
-
-  if (desktop) {
-    if (layoutMode === "theater") {
-      return (
-        <div className="flex flex-1 min-h-0">
-          <div className="flex-1 min-w-0 pixel-border-live m-2 mr-0 overflow-hidden">
-            <VideoArea layoutMode={layoutMode} onLayoutChange={onLayoutChange} />
+        {/* Mobile chat — below the cards (lg:hidden) */}
+        {chatOpen && (
+          <div className="mt-4 lg:hidden h-[400px]">
+            <LiveChatPanel
+              viewerName={identity}
+              roomName={roomName}
+              aiAudienceEnabled={aiAudienceEnabled}
+              streamStartedAt={streamStartedAt}
+            />
           </div>
-          <div className="w-[320px] shrink-0 m-2 flex flex-col">
-            <Sidebar {...sidebarProps} />
-          </div>
-        </div>
-      );
-    }
-    return (
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[960px] px-4 py-3 space-y-3">
-          <div className="pixel-border-live aspect-video overflow-hidden">
-            <VideoArea layoutMode={layoutMode} onLayoutChange={onLayoutChange} />
-          </div>
-          <div className="h-[400px]">
-            <Sidebar {...sidebarProps} />
-          </div>
-        </div>
+        )}
       </div>
-    );
-  }
-
-  // Mobile
-  if (mobilePanel === "video") {
-    return (
-      <div className="flex flex-col flex-1 min-h-0">
-        <div className="pixel-border-live m-1 aspect-video overflow-hidden shrink-0">
-          <VideoArea layoutMode="default" onLayoutChange={onLayoutChange} />
-        </div>
-        <div className="px-2 py-1 flex items-center gap-2">
-          <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary truncate flex-1">
-            {decodeURIComponent(roomName)}
-          </span>
-          <button
-            onClick={() => onMobilePanelChange("chat")}
-            className="px-2 py-1 text-[9px] border border-accent-cyan text-accent-cyan font-[family-name:var(--font-pixel)]"
-          >
-            💬 {t('watch.tabChat')}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col flex-1 min-h-0 m-1">
-      <Sidebar {...sidebarProps} />
     </div>
   );
 }
@@ -1062,8 +1200,6 @@ export default function WatchPage({
   const [joined, setJoined] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>("theater");
-  const [mobilePanel, setMobilePanel] = useState<"video" | "chat">("video");
 
   // 频道数据状态: undefined=加载中, null=不存在, 有值=已加载
   const [channelData, setChannelData] = useState<ChannelData | null | undefined>(undefined);
@@ -1221,47 +1357,18 @@ export default function WatchPage({
   }
 
   return (
-    <div className="ambient-gradient h-screen flex flex-col" data-player-root>
-      {/* Channel context bar (global Navbar already provides logo + nav) */}
-      <div className="flex items-center justify-between h-9 px-3 sm:px-4 hud-panel shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="font-[family-name:var(--font-pixel)] text-[8px] text-text-secondary/60 shrink-0">/watch/</span>
-          <span className="text-sm text-text-primary truncate">
-            {decodeURIComponent(roomName)}
-          </span>
-        </div>
-
-        {/* Mobile panel toggle */}
-        <div className="flex items-center gap-0.5 lg:hidden bg-bg-primary/60 rounded-sm p-0.5">
-          {([
-            { key: "video" as const, icon: "▶", label: t('watch.tabVideo') },
-            { key: "chat" as const, icon: "💬", label: t('watch.tabChat') },
-          ]).map((tb) => (
-            <button
-              key={tb.key}
-              onClick={() => setMobilePanel(tb.key)}
-              className={`px-2.5 py-1 text-[9px] font-[family-name:var(--font-pixel)] transition-all ${
-                mobilePanel === tb.key
-                  ? "bg-accent-cyan/15 text-accent-cyan shadow-[0_0_6px_var(--glow-cyan)]"
-                  : "text-text-secondary hover:text-text-primary"
-              }`}
-            >
-              <span className="mr-1">{tb.icon}</span>{tb.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <LiveKitRoom serverUrl={livekitUrl} token={token!} connect={true} className="flex flex-col flex-1 min-h-0">
-        <WatchLayout
-          layoutMode={layoutMode}
-          onLayoutChange={setLayoutMode}
-          mobilePanel={mobilePanel}
-          onMobilePanelChange={setMobilePanel}
+    <div className="ambient-gradient min-h-screen flex flex-col" data-player-root>
+      <LiveKitRoom
+        serverUrl={livekitUrl}
+        token={token!}
+        connect={true}
+        className="flex flex-col flex-1 min-h-0"
+      >
+        <ConnectedRoom
+          channelData={channelData}
           identity={identity}
           roomName={roomName}
           aiAudienceEnabled={aiAudienceEnabled}
-          streamStartedAt={channelData.liveStream.started_at ?? null}
         />
         <RoomAudioRenderer />
       </LiveKitRoom>
