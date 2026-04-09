@@ -138,8 +138,10 @@ export class Live2DRenderer implements SourceRenderer {
   // 一次性 debug 标记 — 帮诊断面捕链路在哪一步断的, 各只 log 一次
   private didLogFirstInputs = false;
   private didLogFirstApply = false;
-  // 周期 read-back probe: vtube apply 之后立即 read 回 ParamAngleX 看是不是真写进了
-  private probeFrameCounter = 0;
+  // Alias mirror — vtube.json 写 ParamAngleX, 但模型的 deformer 可能 bind 在
+  // ParamAngleMX/SX 上 (saba1B 这种多层 angle 设计). init 时探测模型有哪些
+  // alias 参数, handler 里把 vtube applier 的写入 mirror 过去.
+  private aliasMirror: Array<[string, string[]]> = [];
 
   constructor(opts: {
     modelUrl: string;
@@ -281,11 +283,12 @@ export class Live2DRenderer implements SourceRenderer {
       this.applier = new VtubeApplier(config);
       this.expressions = new ExpressionApplier();
 
-      // ── 诊断: enumerate 真实模型参数 ID, 跟 vtube.json 的 outputLive2D
-      // 对照. Cubism core 对不存在的 param 是 silent fail (写入 _notExist
-      // 字典而不是 _parameterValues), 所以 vtube mapping 用错名字模型
-      // 看起来"完全不响应"但 setParameterValueById 不报错.
-      // Cubism4 没有 public getParameterId(index), 直接读私有 _parameterIds 数组.
+      // ── 诊断 + alias mirror 表构建 ──────────────────────────────
+      // saba1B 这种 VTuber 模型的 deformer 实际 bind 在 ParamAngleMX/SX 上,
+      // ParamAngleX/Y/Z 是"标准接口"占位字段, 写入会进 _parameterValues
+      // 但 mesh 完全没绑, 所以 vtube applier 直接写 ParamAngleX 就是无效的.
+      // VTube Studio 内部肯定有 alias mirror, 我们也加一份: 检查模型是否
+      // 有 M/S 后缀的 alias, 有就在 handler 里把标准参数的值 mirror 过去.
       try {
         const cm = (model as unknown as Live2DModelLike).internalModel.coreModel;
         const ids = cm._parameterIds ?? [];
@@ -298,15 +301,36 @@ export class Live2DRenderer implements SourceRenderer {
         );
         if (missing.length > 0) {
           console.warn(
-            "[live2d] vtube.json 引用了模型不存在的参数 (silent fail, 这些 mapping 写不进 model):",
+            "[live2d] vtube.json 引用了模型不存在的参数 (silent fail):",
             missing
           );
         }
-        // 总是打印模型真实参数列表 — 看一眼就知道 saba1B 用的什么命名风格
-        console.log(
-          "[live2d] 模型实际拥有的所有参数 ID (" + realIds.size + " 个):",
-          Array.from(realIds).sort()
-        );
+
+        // 构建 alias mirror 表 — 已知的多层 angle 命名:
+        //   ParamAngleX → ParamAngleMX (Master), ParamAngleSX (Sub)
+        //   ParamBodyAngleX → ParamBodyAngleMX, ParamBodyAngleSX
+        // 只保留模型实际拥有的 alias.
+        const aliasCandidates: Record<string, string[]> = {
+          ParamAngleX: ["ParamAngleMX", "ParamAngleSX"],
+          ParamAngleY: ["ParamAngleMY", "ParamAngleSY"],
+          ParamAngleZ: ["ParamAngleMZ", "ParamAngleSZ"],
+          ParamBodyAngleX: ["ParamBodyAngleMX", "ParamBodyAngleSX"],
+          ParamBodyAngleY: ["ParamBodyAngleMY", "ParamBodyAngleSY"],
+          ParamBodyAngleZ: ["ParamBodyAngleMZ", "ParamBodyAngleSZ"],
+        };
+        const mirror: Array<[string, string[]]> = [];
+        for (const [from, candidates] of Object.entries(aliasCandidates)) {
+          if (!realIds.has(from)) continue;
+          const aliases = candidates.filter((id) => realIds.has(id));
+          if (aliases.length > 0) mirror.push([from, aliases]);
+        }
+        this.aliasMirror = mirror;
+        if (mirror.length > 0) {
+          console.log(
+            "[live2d] alias mirror 表:",
+            mirror.map(([f, ts]) => `${f} → [${ts.join(", ")}]`).join(" | ")
+          );
+        }
       } catch (e) {
         console.warn("[live2d] 参数 enumerate 失败:", e);
       }
@@ -339,20 +363,19 @@ export class Live2DRenderer implements SourceRenderer {
           }
           this.applier.apply(internal.coreModel, this.latestInputs);
 
-          // Read-back probe — 每秒一次, 看 vtube applier 写完之后
-          // ParamAngleX 在 _parameterValues 数组里的真实值
-          this.probeFrameCounter++;
-          if (this.probeFrameCounter % 60 === 0) {
+          // 1.5) Alias mirror — vtube applier 写 ParamAngleX, 但 saba1B
+          //      这种模型的 deformer 实际 bind 在 ParamAngleMX/SX 上.
+          //      把标准参数的当前值复制到所有已知 alias.
+          if (this.aliasMirror.length > 0) {
             const cm = internal.coreModel;
-            const idx = cm.getParameterIndex?.("ParamAngleX") ?? -1;
-            const real = idx >= 0 && cm._parameterValues
-              ? cm._parameterValues[idx]
-              : NaN;
-            const viaApi = cm.getParameterValueById?.("ParamAngleX") ?? NaN;
-            const inputFx = this.latestInputs.FaceAngleX;
-            console.log(
-              `[live2d PROBE] FaceAngleX_input=${inputFx?.toFixed(2) ?? "N/A"} ParamAngleX idx=${idx} _parameterValues=${(real as number).toFixed(2)} getValueById=${(viaApi as number).toFixed(2)}`
-            );
+            for (const [from, targets] of this.aliasMirror) {
+              const v = cm.getParameterValueById?.(from);
+              if (v !== undefined && Number.isFinite(v)) {
+                for (const t of targets) {
+                  cm.setParameterValueById(t, v);
+                }
+              }
+            }
           }
         }
         // 2) expression 后写 → 表情参数覆盖追踪 (与 VTS 一致)
