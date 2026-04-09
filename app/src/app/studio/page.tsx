@@ -77,6 +77,29 @@ export default function StudioPage() {
   const [faceTracking, setFaceTracking] = useState(false);
   const [faceTrackErr, setFaceTrackErr] = useState<string | null>(null);
 
+  // Mount 时清理重复的 live2d source — React strict mode (dev) 双 mount
+  // 让 useReducer init 跑两次, 每次 push 一个 default source, 产生"双框"
+  // bug. dedupe in reducer 防止未来 add, 但已经存在的需要这里清掉.
+  // 同时 log 当前 source count 帮诊断.
+  useEffect(() => {
+    const live2dCount = scene.sources.filter((s) => s.type === "live2d").length;
+    console.log(
+      `[studio] mount source count: ${scene.sources.length} (${scene.sources.map((s) => s.type).join(", ")})`
+    );
+    if (live2dCount > 1) {
+      // 保留第一个 live2d, 删后面的
+      const live2dSources = scene.sources.filter((s) => s.type === "live2d");
+      for (let i = 1; i < live2dSources.length; i++) {
+        console.warn(
+          `[studio] 删除重复 live2d source: ${live2dSources[i].id}`
+        );
+        dispatch({ type: "removeSource", id: live2dSources[i].id });
+      }
+    }
+    // mount 一次, 不依赖 scene (避免循环)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 推流是否带麦克风 — 启动前可改, live 中改无效 (要重连)
   const [withMic, setWithMic] = useState(false);
 
