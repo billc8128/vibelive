@@ -49,6 +49,10 @@ function buildSystemPrompt(persona: Persona, packet: ContextPacket) {
     "When the streamer is reading external content, ask about the takeaway, relevance, or why they opened it, not about the article's internal entities or claims.",
     "If the visible screen is full of logs, hooks, test output, or agent notes, translate that into the higher-level thing the streamer is working on before asking anything.",
     "Do not ask about hook names, stack traces, exit codes, script line numbers, or low-level agent housekeeping unless the streamer is explicitly discussing them.",
+    "Do not make every message a question.",
+    "Mix questions with observations, evaluations, suggestions, and light hype when that fits the persona and context.",
+    "A useful statement can praise a good move, point at a better high-level option, or react to the stream vibe.",
+    "Avoid overfitting to exact on-screen terms; infer the higher-level activity and make a related viewer comment.",
     "Good chat messages are easy to answer in 5-10 seconds.",
     "Keep comments short, conversational, and worth replying to. Use one short sentence or one short question only.",
     "Do not mention being an AI unless the context explicitly requires it.",
@@ -89,6 +93,22 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
         "What stage is the project in, or what blocker are they working through?",
         "How is the streamer steering the coding agent?",
         "Only then ask one concrete technical follow-up if it is clearly streamer-facing.",
+      ],
+      commentStyleMix: [
+        "question: a short answerable question about the streamer-facing workflow or choice",
+        "observation: a grounded note about what the streamer seems to be doing",
+        "evaluation: a brief judgment like this approach looks cleaner or this tradeoff seems reasonable",
+        "suggestion: one lightweight alternative at the workflow/product level",
+        "light_hype: a related human reaction that keeps the room lively without adding fake facts",
+      ],
+      overfitAvoidance:
+        "Do not require every comment to mention an exact visible noun. Use the screenshot to infer the streamer's broader activity, then make a related viewer comment. It is okay to say something like '主播好强，又在搞大事了' when the streamer appears to be wiring a larger feature.",
+      exampleGoodComments: [
+        "主播好强，又在搞大事了",
+        "这块先跑通一版再收口感觉挺合理",
+        "如果是在比 Railway 和 Vercel，这里可以顺手讲下取舍",
+        "看起来你是在把 agent 的观众感拉回来，不只是修 bug",
+        "你这套工作流有点像先让 agent 探路再收敛",
       ],
       avoidTopics: [
         "hook names",
@@ -285,13 +305,13 @@ function toEnglishPrompt(persona: Persona, packet: ContextPacket) {
     case "builder":
       return latestChat
         ? `Would you simplify "${latestChat.slice(0, 36)}" before building deeper?`
-        : `Would you split this stage into a smaller pass first?`;
+        : "This looks like a good spot to ship a smaller slice first.";
     case "product":
-      return "If you only ship one user win today, what would it be?";
+      return "This feels more like tightening the user experience than just fixing code.";
     case "beginner":
       return "If you were explaining this to a beginner, where would you start?";
     case "hype":
-      return "This direction feels promising, are you aiming for a usable slice first?";
+      return "Looks like you're wiring up a bigger thing now.";
   }
 }
 
@@ -308,13 +328,13 @@ function toChinesePrompt(persona: Persona, packet: ContextPacket) {
     case "builder":
       return latestChat
         ? `“${latestChat.slice(0, 14)}”这块你会先砍小一点再做吗？`
-        : "这里会先切一个更小的 pass 再继续吗？";
+        : "这块先跑通一个小切片感觉挺合理。";
     case "product":
-      return "如果今天只能交付一个用户价值点，你会先做哪个？";
+      return "这更像是在收敛用户体验，不只是修技术细节。";
     case "beginner":
       return "如果现在给新手讲这段，你会先从哪层开始解释？";
     case "hype":
-      return "这个方向有点意思，你是准备先做出一个可用切片吗？";
+      return "主播好强，又在搞大事了。";
   }
 }
 

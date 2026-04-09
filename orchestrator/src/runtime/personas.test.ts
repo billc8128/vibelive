@@ -12,4 +12,15 @@ describe("PERSONAS", () => {
       "hype",
     ]);
   });
+
+  it("encourages comments beyond only questions", () => {
+    expect(
+      PERSONAS.every((persona) =>
+        persona.promptSeed.includes("Mix questions with"),
+      ),
+    ).toBe(true);
+    expect(PERSONAS.find((persona) => persona.key === "hype")?.promptSeed).toContain(
+      "light hype",
+    );
+  });
 });

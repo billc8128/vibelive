@@ -112,6 +112,15 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[0]?.content).toContain(
       "When the streamer is reading external content, ask about the takeaway, relevance, or why they opened it",
     );
+    expect(body.messages[0]?.content).toContain(
+      "Do not make every message a question.",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "Mix questions with observations, evaluations, suggestions, and light hype",
+    );
+    expect(body.messages[0]?.content).toContain(
+      "Avoid overfitting to exact on-screen terms",
+    );
   });
 
   it("uses screenshot summary instead of raw image input for chat generation", async () => {
@@ -191,6 +200,9 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[1]?.content).toContain('"suggestedAngleOrder"');
     expect(body.messages[1]?.content).toContain('"understandingRequirement"');
     expect(body.messages[1]?.content).toContain('"externalContentRule"');
+    expect(body.messages[1]?.content).toContain('"commentStyleMix"');
+    expect(body.messages[1]?.content).toContain('"overfitAvoidance"');
+    expect(body.messages[1]?.content).toContain('"exampleGoodComments"');
     expect(body.messages[1]?.content).toContain('"latestScreenshotSummary"');
   });
 

@@ -265,7 +265,7 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
                     currentTaskSummary:
                       "Describe what the streamer is trying to do right now in one short sentence at a viewer-friendly level.",
                     suggestedAngles:
-                      "Suggested angles should sound like public-chat questions about tools, workflow, project stage, platform choice, or current blocker. Avoid hook names, error strings, line numbers, and low-level implementation details.",
+                      "Suggested angles should support public-chat questions or comments about tools, workflow, project stage, platform choice, current blocker, or the stream vibe. Avoid hook names, error strings, line numbers, and low-level implementation details.",
                   },
                 }),
               },

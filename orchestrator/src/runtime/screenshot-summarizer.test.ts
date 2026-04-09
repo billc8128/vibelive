@@ -74,7 +74,7 @@ describe("OpenRouterScreenshotSummarizer", () => {
         ?.text,
     );
     expect(userText).toContain(
-      "Suggested angles should sound like public-chat questions about tools, workflow, project stage, platform choice, or current blocker",
+      "Suggested angles should support public-chat questions or comments about tools, workflow, project stage, platform choice, current blocker, or the stream vibe",
     );
     expect(userText).toContain('"contentContext"');
     expect(userText).toContain('"activityConfidence"');
