@@ -256,29 +256,25 @@ class FaceTrackerImpl {
     const RAD2DEG = 180 / Math.PI;
 
     // ── 周期性诊断 log ─────────────────────────────────────────
-    // 头部跟随 bug: 嘴能动头不能动 → 怀疑矩阵 layout 或 Euler order
-    // 错了. 每秒打一次完整 matrix + 两种 layout 假设下解出的 yaw/pitch/roll,
-    // 让用户在动头时看 console 对照实际行为, 直接定位问题.
+    // 用字符串模板直接打印数值, 避免 Chrome console 把 array 折叠成
+    // "Array(3)". 每秒一条, 头部跟随出问题时直接从 console 看出数值.
     this.debugFrameCounter++;
     if (this.debugFrameCounter % 60 === 0) {
-      // Column-major 解读 (当前的假设)
-      const colYaw = Math.atan2(m[8], m[10]) * RAD2DEG;
-      const colPitch = Math.asin(-Math.max(-1, Math.min(1, m[9]))) * RAD2DEG;
-      const colRoll = Math.atan2(m[1], m[5]) * RAD2DEG;
-      // Row-major 解读 (替代假设)
-      const rowYaw = Math.atan2(m[2], m[10]) * RAD2DEG;
-      const rowPitch = Math.asin(-Math.max(-1, Math.min(1, m[6]))) * RAD2DEG;
-      const rowRoll = Math.atan2(m[4], m[5]) * RAD2DEG;
-      console.log("[face-tracker DEBUG]", {
-        matrix: [
-          [m[0]?.toFixed(2), m[1]?.toFixed(2), m[2]?.toFixed(2), m[3]?.toFixed(2)],
-          [m[4]?.toFixed(2), m[5]?.toFixed(2), m[6]?.toFixed(2), m[7]?.toFixed(2)],
-          [m[8]?.toFixed(2), m[9]?.toFixed(2), m[10]?.toFixed(2), m[11]?.toFixed(2)],
-          [m[12]?.toFixed(2), m[13]?.toFixed(2), m[14]?.toFixed(2), m[15]?.toFixed(2)],
-        ],
-        colMajor_YPR: [colYaw.toFixed(1), colPitch.toFixed(1), colRoll.toFixed(1)],
-        rowMajor_YPR: [rowYaw.toFixed(1), rowPitch.toFixed(1), rowRoll.toFixed(1)],
-      });
+      const f = (v: number) => (v ?? 0).toFixed(2).padStart(6);
+      const d = (v: number) => (v * RAD2DEG).toFixed(0).padStart(4);
+      // Column-major 解读 (当前的假设): m[col*4+row]
+      const colYaw = Math.atan2(m[8], m[10]);
+      const colPitch = Math.asin(-Math.max(-1, Math.min(1, m[9])));
+      const colRoll = Math.atan2(m[1], m[5]);
+      // Row-major 解读 (替代假设): m[row*4+col]
+      const rowYaw = Math.atan2(m[2], m[10]);
+      const rowPitch = Math.asin(-Math.max(-1, Math.min(1, m[6])));
+      const rowRoll = Math.atan2(m[4], m[5]);
+      console.log(
+        `[ft] m=[${f(m[0])}${f(m[1])}${f(m[2])}${f(m[3])} | ${f(m[4])}${f(m[5])}${f(m[6])}${f(m[7])} | ${f(m[8])}${f(m[9])}${f(m[10])}${f(m[11])} | ${f(m[12])}${f(m[13])}${f(m[14])}${f(m[15])}] ` +
+          `COL[Y${d(colYaw)} P${d(colPitch)} R${d(colRoll)}] ` +
+          `ROW[Y${d(rowYaw)} P${d(rowPitch)} R${d(rowRoll)}]`
+      );
     }
 
     // VTube Studio 习惯: 摄像头镜像 → 用户右转头, 模型也右转头.
