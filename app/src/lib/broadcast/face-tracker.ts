@@ -433,14 +433,31 @@ class FaceTrackerImpl {
       Math.abs(v) < threshold ? 0 : v;
 
     // EyeOpen* — VTS 的 EyeOpenRight/Left 默认范围 [0, 0.5] (1.0 = 大睁眼).
-    // saba1B 的 .vtube.json 用 InputRangeUpper=0.5 → 输出 1 (全开).
-    //   1. raw - baseline = "相对闭眼度"
-    //   2. 乘 eyeOpenScale 调灵敏度
-    //   3. 1 - 它, clamp [0, 1], 再 * 0.5 得 VTS 输出范围 [0, 0.5]
+    //
+    // 双向映射 (跟 VTube Studio 的 "Eye Open Default" 一致):
+    //   - blinkRel < 0  (用户睁更大): default → 1.0 (max)
+    //   - blinkRel = 0  (用户中性):    default 自身 (默认 0.8, 不是 1.0)
+    //   - blinkRel > 0  (用户闭眼):    default → 0
+    //
+    // 这样自然睁眼对应模型 80% 睁开, 看起来放松而不是瞪眼;
+    // 用户主动睁更大才会让模型 100% 睁开 (惊讶 / 强调).
+    //
+    // Piecewise linear 公式:
+    //   if (rel >= 0): out = default * (1 - rel)
+    //   if (rel <  0): out = default + (1 - default) * (-rel)
+    // clamp [0, 1], 再 * 0.5 得 VTS 输出范围 [0, 0.5].
     const blinkLRel = rel("eyeBlinkLeft") * studioConfig.eyeOpenScale;
     const blinkRRel = rel("eyeBlinkRight") * studioConfig.eyeOpenScale;
-    const eyeOpenLeft = Math.max(0, Math.min(1, 1 - blinkLRel)) * 0.5;
-    const eyeOpenRight = Math.max(0, Math.min(1, 1 - blinkRRel)) * 0.5;
+    const def = studioConfig.eyeOpenDefault;
+    const mapEye = (relV: number) => {
+      const t =
+        relV >= 0
+          ? def * (1 - relV)
+          : def + (1 - def) * -relV;
+      return Math.max(0, Math.min(1, t)) * 0.5;
+    };
+    const eyeOpenLeft = mapEye(blinkLRel);
+    const eyeOpenRight = mapEye(blinkRRel);
 
     // 嘴 — 用 baseline 减 + clamp >= 0. 不减 baseline 时如果用户校准
     // 时嘴微张 (MediaPipe 给 0.05-0.1 的非零基线), 静态时模型嘴会一直

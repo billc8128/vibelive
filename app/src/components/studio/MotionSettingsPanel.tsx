@@ -80,6 +80,9 @@ export function MotionSettingsPanel() {
   // mutation 仍然保留. defaults 只用于"重置"按钮.
   const [faceScale, setFaceScale] = useState(studioConfig.faceAngleScale);
   const [eyeOpenScale, setEyeOpenScale] = useState(studioConfig.eyeOpenScale);
+  const [eyeOpenDefault, setEyeOpenDefault] = useState(
+    studioConfig.eyeOpenDefault
+  );
   const [eyeBallScale, setEyeBallScale] = useState(studioConfig.eyeBallScale);
   const [mouthOpenScale, setMouthOpenScale] = useState(
     studioConfig.mouthOpenScale
@@ -100,6 +103,7 @@ export function MotionSettingsPanel() {
   const reset = () => {
     setFaceScale(STUDIO_CONFIG_DEFAULTS.faceAngleScale);
     setEyeOpenScale(STUDIO_CONFIG_DEFAULTS.eyeOpenScale);
+    setEyeOpenDefault(STUDIO_CONFIG_DEFAULTS.eyeOpenDefault);
     setEyeBallScale(STUDIO_CONFIG_DEFAULTS.eyeBallScale);
     setMouthOpenScale(STUDIO_CONFIG_DEFAULTS.mouthOpenScale);
     setBrowScale(STUDIO_CONFIG_DEFAULTS.browScale);
@@ -190,6 +194,17 @@ export function MotionSettingsPanel() {
       </Section>
 
       <Section title="眼睛" color="text-accent-yellow">
+        <SliderRow
+          label="默认开合度"
+          value={eyeOpenDefault}
+          min={0.3}
+          max={1}
+          step={0.05}
+          onChange={(v) => {
+            setEyeOpenDefault(v);
+            studioConfig.eyeOpenDefault = v;
+          }}
+        />
         <SliderRow
           label="开合灵敏度"
           value={eyeOpenScale}
