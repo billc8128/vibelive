@@ -48,15 +48,23 @@ class FaceTrackerImpl {
   // 周期性 debug log: 每隔 N 帧打印一次完整矩阵 + 解出来的 yaw/pitch/roll,
   // 帮用户在头部跟随出问题时直接看 console 数值. 60 帧 ≈ 1 秒.
   private debugFrameCounter = 0;
-  // Calibration baseline — 用户点"校准"按钮时记录, 后续 raw 减 baseline.
-  // calibrationVersion 监听 studioConfig 变化, 不等的下一帧重新记录.
+  // Calibration baseline — 用户点"校准"按钮时, 累积 N 帧 raw 数据求
+  // 平均作为 baseline. 单帧 snapshot 容易踩到 blink/说话/抖动的瞬间,
+  // 多帧平均把 MediaPipe 的 frame-to-frame jitter 压下去.
   private lastCalibVersion = 0;
   private baseYaw = 0;
   private basePitch = 0;
   private baseRoll = 0;
-  // 全 blendshapes baseline — eye blink/look, brow, mouth 都用这个减.
+  // 全 blendshapes baseline — eye blink/look, brow, mouth, jaw 都用这个减.
   // 不同人光线 / 脸型, raw blendshape 在静态时也有非零基线.
   private baseBlendshapes: Record<string, number> = {};
+  // 校准累积 buffer — 校准触发后这些字段累积 N 帧, 然后求平均
+  private calibFramesNeeded = 0; // > 0 表示校准进行中, 0 表示空闲
+  private calibSumYaw = 0;
+  private calibSumPitch = 0;
+  private calibSumRoll = 0;
+  private calibSumBlendshapes: Record<string, number> = {};
+  private static CALIB_FRAMES = 30; // ≈ 0.5 秒 @ 60fps
 
   get running(): boolean {
     return this._running;
@@ -64,6 +72,11 @@ class FaceTrackerImpl {
 
   get error(): Error | null {
     return this._error;
+  }
+
+  /** UI 查询: 校准是否还在采样中 (true) 还是空闲 (false) */
+  get isCalibrating(): boolean {
+    return this.calibFramesNeeded > 0;
   }
 
   /**
@@ -265,24 +278,50 @@ class FaceTrackerImpl {
     const roll = Math.atan2(m10, m11);
     const RAD2DEG = 180 / Math.PI;
 
-    // ── Calibration baseline 检查 ─────────────────────────────────
-    // 用户点"校准"按钮 (calibrationVersion 自增), 记录当前 raw 值作为
-    // "中性姿态" baseline. 后续输出 = raw - baseline.
+    // ── Calibration baseline (多帧平均) ──────────────────────────
+    // 用户点"校准"按钮 (calibrationVersion 自增) → 进入采样模式,
+    // 累积 CALIB_FRAMES 帧数据, 求平均后更新 baseline. 多帧平均抵消
+    // MediaPipe ~10% 的 frame-to-frame jitter, 也能 dilute 用户校准
+    // 瞬间的 blink / 说话 / 微动的影响.
     if (studioConfig.calibrationVersion !== this.lastCalibVersion) {
+      // 新校准请求 — 重置 buffer 进入采样模式
       this.lastCalibVersion = studioConfig.calibrationVersion;
-      this.baseYaw = yaw;
-      this.basePitch = pitch;
-      this.baseRoll = roll;
-      // 全部 blendshapes 都记 baseline — eye blink/look, brow, mouth 都
-      // 在静态时有非零基线, 校准能让"中性凝视"对应模型零位置.
-      this.baseBlendshapes = {};
-      for (const c of blendshapes[0].categories) {
-        if (c.categoryName)
-          this.baseBlendshapes[c.categoryName] = c.score;
-      }
+      this.calibFramesNeeded = FaceTrackerImpl.CALIB_FRAMES;
+      this.calibSumYaw = 0;
+      this.calibSumPitch = 0;
+      this.calibSumRoll = 0;
+      this.calibSumBlendshapes = {};
       console.log(
-        `[face-tracker] ✓ 校准完成 baseline yaw=${(yaw * RAD2DEG).toFixed(1)}° pitch=${(pitch * RAD2DEG).toFixed(1)}° roll=${(roll * RAD2DEG).toFixed(1)}° blendshapes=${Object.keys(this.baseBlendshapes).length}`
+        `[face-tracker] 开始校准 — 采样 ${FaceTrackerImpl.CALIB_FRAMES} 帧 (~0.5 秒)`
       );
+    }
+    if (this.calibFramesNeeded > 0) {
+      // 累积当前帧数据
+      this.calibSumYaw += yaw;
+      this.calibSumPitch += pitch;
+      this.calibSumRoll += roll;
+      for (const c of blendshapes[0].categories) {
+        if (c.categoryName) {
+          this.calibSumBlendshapes[c.categoryName] =
+            (this.calibSumBlendshapes[c.categoryName] ?? 0) + c.score;
+        }
+      }
+      this.calibFramesNeeded--;
+      if (this.calibFramesNeeded === 0) {
+        // 采样完成 — 求平均, 写入 baseline
+        const N = FaceTrackerImpl.CALIB_FRAMES;
+        this.baseYaw = this.calibSumYaw / N;
+        this.basePitch = this.calibSumPitch / N;
+        this.baseRoll = this.calibSumRoll / N;
+        this.baseBlendshapes = {};
+        for (const k of Object.keys(this.calibSumBlendshapes)) {
+          this.baseBlendshapes[k] = this.calibSumBlendshapes[k] / N;
+        }
+        console.log(
+          `[face-tracker] ✓ 校准完成 (${N} 帧平均) yaw=${(this.baseYaw * RAD2DEG).toFixed(1)}° pitch=${(this.basePitch * RAD2DEG).toFixed(1)}° roll=${(this.baseRoll * RAD2DEG).toFixed(1)}° blendshapes=${Object.keys(this.baseBlendshapes).length}`,
+          { sampleBaselines: { jawOpen: this.baseBlendshapes.jawOpen?.toFixed(3), eyeBlinkLeft: this.baseBlendshapes.eyeBlinkLeft?.toFixed(3), eyeBlinkRight: this.baseBlendshapes.eyeBlinkRight?.toFixed(3) } }
+        );
+      }
     }
 
     // 减去 baseline → 相对偏移
@@ -351,8 +390,10 @@ class FaceTrackerImpl {
     const eyeOpenLeft = Math.max(0, Math.min(1, 1 - blinkLRel)) * 0.5;
     const eyeOpenRight = Math.max(0, Math.min(1, 1 - blinkRRel)) * 0.5;
 
-    // 嘴 — jawOpen 乘 mouthOpenScale 调灵敏度
-    const jawOpen = (bs.jawOpen ?? 0) * studioConfig.mouthOpenScale;
+    // 嘴 — 用 baseline 减 + clamp >= 0. 不减 baseline 时如果用户校准
+    // 时嘴微张 (MediaPipe 给 0.05-0.1 的非零基线), 静态时模型嘴会一直
+    // 微张, 跟"中性"对不上.
+    const jawOpen = Math.max(0, rel("jawOpen") * studioConfig.mouthOpenScale);
 
     // 微笑 — 取左右平均, 也用 baseline 减
     const smile = (rel("mouthSmileLeft") + rel("mouthSmileRight")) / 2;

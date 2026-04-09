@@ -90,7 +90,10 @@ export function MotionSettingsPanel() {
   );
   const [breathAmp, setBreathAmp] = useState(studioConfig.breathAmpY);
   const [breathFreq, setBreathFreq] = useState(studioConfig.breathFreqHz);
-  const [calibBlink, setCalibBlink] = useState(false);
+  // Calibration UI 状态: idle → sampling (500ms) → done (700ms) → idle
+  const [calibState, setCalibState] = useState<"idle" | "sampling" | "done">(
+    "idle"
+  );
 
   const reset = () => {
     setFaceScale(STUDIO_CONFIG_DEFAULTS.faceAngleScale);
@@ -107,9 +110,11 @@ export function MotionSettingsPanel() {
 
   const calibrate = () => {
     studioConfig.calibrationVersion += 1;
-    // UI 反馈: 短暂闪烁 "已校准" 提示
-    setCalibBlink(true);
-    setTimeout(() => setCalibBlink(false), 800);
+    // 校准是 30 帧多帧采样 (≈ 0.5 秒). UI 显示 "采样中..." 给用户
+    // 提示 "保持不动", 然后 "✓ 已校准" 反馈成功.
+    setCalibState("sampling");
+    setTimeout(() => setCalibState("done"), 600);
+    setTimeout(() => setCalibState("idle"), 1500);
   };
 
   return (
@@ -132,17 +137,24 @@ export function MotionSettingsPanel() {
       <button
         type="button"
         onClick={calibrate}
-        className={`w-full pixel-border px-3 py-2 font-[family-name:var(--font-pixel)] text-[9px] uppercase tracking-wider transition-colors ${
-          calibBlink
-            ? "bg-accent-green/30 text-accent-green"
-            : "bg-accent-purple/15 text-accent-purple hover:bg-accent-purple/30"
+        disabled={calibState === "sampling"}
+        className={`w-full pixel-border px-3 py-2 font-[family-name:var(--font-pixel)] text-[9px] uppercase tracking-wider transition-colors disabled:cursor-not-allowed ${
+          calibState === "sampling"
+            ? "bg-accent-yellow/20 text-accent-yellow"
+            : calibState === "done"
+              ? "bg-accent-green/30 text-accent-green"
+              : "bg-accent-purple/15 text-accent-purple hover:bg-accent-purple/30"
         }`}
-        title="保持自然正脸 + 自然睁眼, 点击记录基准"
+        title="保持自然正脸 + 自然睁眼 + 嘴闭, 点击采样 0.5 秒后成为基准"
       >
-        {calibBlink ? "✓ 已校准" : "⊕ 校准 / Calibrate"}
+        {calibState === "sampling"
+          ? "⏺ 采样中... (保持不动 0.5 秒)"
+          : calibState === "done"
+            ? "✓ 已校准"
+            : "⊕ 校准 / Calibrate"}
       </button>
       <p className="text-[9px] text-text-secondary/60 leading-relaxed -mt-1">
-        保持自然正脸 + 自然睁眼时点击, 系统记录这是中性姿态.
+        保持自然正脸 + 自然睁眼 + 嘴闭, 点击后系统采样 30 帧 (~0.5 秒) 求平均.
       </p>
 
       <Section title="头部" color="text-accent-cyan">
