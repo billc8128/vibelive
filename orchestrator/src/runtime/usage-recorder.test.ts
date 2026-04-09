@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   InMemoryUsageRecorder,
-  SupabaseUsageRecorder,
+  PostgresUsageRecorder,
 } from "./usage-recorder.js";
 
 describe("InMemoryUsageRecorder", () => {
@@ -89,14 +89,15 @@ describe("InMemoryUsageRecorder", () => {
   });
 });
 
-describe("SupabaseUsageRecorder", () => {
-  it("persists usage events through Supabase REST and aggregates persisted rows", async () => {
+describe("PostgresUsageRecorder", () => {
+  it("creates the usage table, persists usage events, and aggregates persisted rows", async () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const fetchMock = vi
+    const queryMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(null, { status: 201 }))
-      .mockResolvedValueOnce(
-        Response.json([
+      .mockResolvedValueOnce({ rows: [], rowCount: null })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [
           {
             id: "11111111-1111-4111-8111-111111111111",
             created_at: "2026-04-09T07:00:00.000Z",
@@ -124,13 +125,12 @@ describe("SupabaseUsageRecorder", () => {
               cost: 0.00074,
             },
           },
-        ]),
-      );
+        ],
+        rowCount: 1,
+      });
 
-    const recorder = new SupabaseUsageRecorder({
-      supabaseUrl: "https://project.supabase.co",
-      serviceRoleKey: "service-role",
-      fetchImpl: fetchMock as typeof fetch,
+    const recorder = new PostgresUsageRecorder({
+      pool: { query: queryMock },
       now: () => 1_765_000_000_000,
     });
 
@@ -158,30 +158,29 @@ describe("SupabaseUsageRecorder", () => {
       },
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://project.supabase.co/rest/v1/ai_audience_usage_events",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({
-          apikey: "service-role",
-          authorization: "Bearer service-role",
-          prefer: "return=minimal",
-        }),
-        body: expect.stringContaining('"room_slug":"demo-room"'),
-      }),
+    expect(queryMock).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("create table if not exists ai_audience_usage_events"),
+    );
+    expect(queryMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("insert into ai_audience_usage_events"),
+      expect.arrayContaining([
+        "demo-room",
+        "channel-1",
+        "agent_decide",
+        "curious",
+        "google/gemini-3-flash-preview",
+        0.00074,
+      ]),
     );
 
     const summary = await recorder.summary();
 
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "https://project.supabase.co/rest/v1/ai_audience_usage_events?select=*&order=created_at.desc&limit=5000",
-      expect.objectContaining({
-        method: "GET",
-        headers: expect.objectContaining({
-          apikey: "service-role",
-          authorization: "Bearer service-role",
-        }),
-      }),
+    expect(queryMock).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("from ai_audience_usage_events"),
+      [5000],
     );
     expect(summary.totals).toMatchObject({
       requests: 1,
