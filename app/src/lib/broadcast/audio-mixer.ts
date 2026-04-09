@@ -148,6 +148,14 @@ class AudioMixerImpl {
   // ── DeviceChange listener installed flag ──
   private deviceChangeAttached = false;
 
+  // ── Reentrancy locks ──
+  // requestMicPermission 锁: React StrictMode dev 默认会双 mount, 让 useEffect
+  // 跑两次. 没锁的话两次都进 openMicStream, 各自 await getUserMedia, 然后两个
+  // source 节点都 connect 到同一个持久 gain → 双声道叠加 + 第一个 stream 引用
+  // 被覆盖泄漏. 锁让第二次直接 await 第一次的 promise, 完了之后 micReady=true
+  // 早返回, 不重复跑.
+  private requestMicInFlight: Promise<void> | null = null;
+
   constructor() {
     // 浏览器 capability detection — 跟 SSR 解耦
     if (typeof navigator !== "undefined" && navigator.mediaDevices) {
@@ -191,9 +199,33 @@ class AudioMixerImpl {
   /**
    * 申请麦克风权限并建图. 进 studio 时调.
    * 已经 ready 直接返回. 用户拒绝就 setSnap permission=denied 不抛.
+   *
+   * 并发安全: 如果已有调用在跑, 后续调用会 await 同一个 promise (不再重复
+   * 申请权限). 这是为了 React StrictMode dev 双 mount — face-tracker 用同样
+   * 的 starting promise 模式.
    */
   async requestMicPermission(): Promise<void> {
     if (this.snap.micReady) return;
+    if (this.requestMicInFlight) {
+      // 等已在跑的那次结果, 不管成功失败都直接返回 — 失败的话用户可以手动
+      // 点 AudioMixerPanel 的"重试授权"按钮再试, 不要在这里自动重试 (会
+      // 反复弹拒绝 dialog).
+      try {
+        await this.requestMicInFlight;
+      } catch {
+        // 已在 setSnap 里报告了错误, 这里吞掉
+      }
+      return;
+    }
+    this.requestMicInFlight = this._doRequestMicPermission();
+    try {
+      await this.requestMicInFlight;
+    } finally {
+      this.requestMicInFlight = null;
+    }
+  }
+
+  private async _doRequestMicPermission(): Promise<void> {
     try {
       await this.openMicStream();
       this.setSnap({
@@ -756,7 +788,14 @@ class AudioMixerImpl {
    */
   async attachToRoom(room: Room): Promise<void> {
     this.room = room;
-    this.setSnap({ attachedToRoom: true });
+    // 清掉旧 error (上一次推流的残留), 让本次的失败状态可以干净写入
+    this.setSnap({ attachedToRoom: true, error: null });
+
+    // 收集所有 publish 错误, 最后一并写到 snap.error.
+    // 设计选择: mic / system 是可选音轨, 单个失败不应该 throw 让 publisher
+    // 整体进入 "error" 状态 (那样会导致视频流也被回滚). 但 UI 必须能看到
+    // 失败原因, 不能像之前那样只 console.error 让用户上线后才发现没声音.
+    const failures: string[] = [];
 
     // ── Mic ──
     if (this.micLkTrack) {
@@ -775,7 +814,9 @@ class AudioMixerImpl {
           await this.micLkTrack.mute();
         }
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.error("[audio-mixer] publish mic failed:", e);
+        failures.push(`麦克风上传失败: ${msg}`);
       }
     }
 
@@ -790,8 +831,15 @@ class AudioMixerImpl {
           }
         );
       } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.error("[audio-mixer] publish system audio failed:", e);
+        failures.push(`系统声音上传失败: ${msg}`);
       }
+    }
+
+    if (failures.length > 0) {
+      // 多条错误用换行连接, AudioMixerPanel 的 <p> 会自动换行显示
+      this.setSnap({ error: failures.join(" · ") });
     }
   }
 
