@@ -5,6 +5,7 @@ import type {
   RuntimeContextEvent,
   StartRuntimePayload,
   StopRuntimePayload,
+  TickRuntimePayload,
 } from "../types.js";
 import { RoomManager } from "../runtime/room-manager.js";
 import { RoomRuntime } from "../runtime/room-runtime.js";
@@ -107,6 +108,27 @@ export function registerRuntimeRoutes(
       action: "context",
       roomSlug: payload.roomSlug.trim(),
       kind: payload.kind,
+    };
+  });
+
+  app.post("/runtime/tick", async (request, reply) => {
+    if (!authorizeRequest(request, reply, config)) return reply;
+
+    const payload = request.body as TickRuntimePayload | undefined;
+    if (!payload?.roomSlug?.trim()) {
+      return reply.code(400).send({ error: "roomSlug is required" });
+    }
+
+    const runtime = roomManager.get(payload.roomSlug.trim());
+    if (!runtime?.tick) {
+      return reply.code(404).send({ error: "runtime not found" });
+    }
+
+    await runtime.tick();
+    return {
+      ok: true,
+      action: "tick",
+      roomSlug: payload.roomSlug.trim(),
     };
   });
 }

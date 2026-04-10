@@ -94,7 +94,7 @@ export class RoomRuntime {
   async start() {
     this.stopped = false;
     await this.observer.start();
-    if (!this.tickTimer) {
+    if (!this.payload.clientDriven && !this.tickTimer) {
       this.scheduleNextTick();
     }
   }
@@ -157,7 +157,7 @@ export class RoomRuntime {
         hasScreenshot:
           !!packet.latestScreenshot || !!packet.latestScreenshotSummary,
         hasVideo: !!packet.latestVideoClip,
-        attachedImage: !!packet.latestScreenshot && !packet.latestScreenshotSummary,
+        attachedImage: !!packet.latestScreenshot,
         usedScreenshotSummary: !!packet.latestScreenshotSummary,
       });
       if (decision.type !== "speak") {

@@ -12,10 +12,15 @@ export interface StartRuntimePayload {
   roomTitle?: string;
   projectStage?: string;
   codingTool?: string;
+  clientDriven?: boolean;
   aiAudience?: AiAudienceRuntimeSettings;
 }
 
 export interface StopRuntimePayload {
+  roomSlug: string;
+}
+
+export interface TickRuntimePayload {
   roomSlug: string;
 }
 
@@ -69,4 +74,5 @@ export interface BotChatMessage {
 export interface RoomRuntimeHandle {
   stop(): Promise<void> | void;
   ingestContextEvent?(event: RuntimeContextEvent): Promise<void> | void;
+  tick?(): Promise<void> | void;
 }

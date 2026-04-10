@@ -161,6 +161,7 @@ export async function POST() {
       roomTitle: channel.title || channel.slug,
       projectStage: channel.project_stage || "构思中",
       codingTool: channel.coding_tool || "other",
+      clientDriven: true,
       aiAudience,
     }).catch(() => {});
   }

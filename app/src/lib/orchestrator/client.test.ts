@@ -4,6 +4,7 @@ import {
   buildSignedOrchestratorHeaders,
   getAiAudienceUsageSummary,
   sendAiAudienceContextEvent,
+  tickAiAudienceRuntime,
 } from "./client";
 
 describe("buildSignedOrchestratorHeaders", () => {
@@ -76,6 +77,39 @@ describe("sendAiAudienceContextEvent", () => {
           kind: "video_clip",
           url: "data:video/webm;base64,clip",
           capturedAt: 1_744_163_200_000,
+        }),
+      }),
+    );
+  });
+});
+
+describe("tickAiAudienceRuntime", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("posts a runtime tick request to the orchestrator", async () => {
+    vi.stubEnv("AI_AUDIENCE_ORCHESTRATOR_URL", "https://orchestrator.example");
+    vi.stubEnv("AI_AUDIENCE_ORCHESTRATOR_SECRET", "shared-secret");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 202 }));
+
+    await tickAiAudienceRuntime({
+      roomSlug: "demo-room",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://orchestrator.example/runtime/tick",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-orchestrator-secret": "shared-secret",
+          "content-type": "application/json",
+        }),
+        body: JSON.stringify({
+          roomSlug: "demo-room",
         }),
       }),
     );

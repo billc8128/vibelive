@@ -6,10 +6,15 @@ export interface StartAiAudienceRuntimePayload {
   roomTitle: string;
   projectStage: string;
   codingTool: string;
+  clientDriven?: boolean;
   aiAudience: AiAudienceSettings;
 }
 
 export interface StopAiAudienceRuntimePayload {
+  roomSlug: string;
+}
+
+export interface TickAiAudienceRuntimePayload {
   roomSlug: string;
 }
 
@@ -125,6 +130,7 @@ async function orchestratorRequest(
   payload:
     | StartAiAudienceRuntimePayload
     | StopAiAudienceRuntimePayload
+    | TickAiAudienceRuntimePayload
     | AiAudienceContextEventPayload,
 ) {
   const url = buildRuntimeUrl(path);
@@ -168,6 +174,12 @@ export async function sendAiAudienceContextEvent(
   payload: AiAudienceContextEventPayload,
 ) {
   return orchestratorRequest("/runtime/context", payload);
+}
+
+export async function tickAiAudienceRuntime(
+  payload: TickAiAudienceRuntimePayload,
+) {
+  return orchestratorRequest("/runtime/tick", payload);
 }
 
 export async function getAiAudienceUsageSummary() {

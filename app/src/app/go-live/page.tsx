@@ -50,6 +50,10 @@ import {
   capturePreviewVideoClip,
 } from "@/lib/ai-audience/screenshot";
 import { mirrorAiAudienceContextEvent } from "@/lib/ai-audience/context";
+import {
+  captureAiAudienceMediaAndTick,
+  pickAiAudienceTickDelayMs,
+} from "@/lib/ai-audience/runtime-loop";
 import { useNickname } from "@/lib/useNickname";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n/context";
@@ -125,8 +129,6 @@ const PLATFORM_OPTIONS = [
 ] as const;
 
 const SLOW_MODE_OPTIONS = [5, 10, 30, 60] as const;
-const AI_AUDIENCE_SCREENSHOT_INTERVAL_MS = 20_000;
-const AI_AUDIENCE_VIDEO_CLIP_INTERVAL_MS = 60_000;
 const AI_AUDIENCE_VIDEO_CLIP_DURATION_MS = 2_000;
 const AI_AUDIENCE_INTENSITY_OPTIONS: {
   value: AiAudienceIntensity;
@@ -1287,74 +1289,74 @@ function Dashboard({
     }
 
     let cancelled = false;
-    let videoCaptureRunning = false;
+    let tickRunning = false;
+    let tickTimer: ReturnType<typeof setTimeout> | null = null;
+    const intensity = savedChannel.settings.ai_audience_intensity ?? "medium";
 
-    const captureAndMirror = () => {
-      const preview = previewVideoRef.current;
-      if (!preview) {
+    const scheduleNextTick = () => {
+      if (cancelled) {
         return;
       }
 
-      const screenshot = capturePreviewScreenshot(preview);
-      if (!screenshot) {
-        return;
-      }
-
-      void mirrorAiAudienceContextEvent({
-        roomSlug: savedChannel.slug,
-        kind: "screenshot",
-        url: screenshot,
-        capturedAt: Date.now(),
-      }).catch(() => {});
+      const delay = pickAiAudienceTickDelayMs(intensity, Math.random());
+      tickTimer = setTimeout(() => {
+        tickTimer = null;
+        void runTick();
+      }, delay);
     };
 
-    const captureAndMirrorVideo = async () => {
-      if (videoCaptureRunning) {
+    const runTick = async () => {
+      if (cancelled || tickRunning) {
         return;
       }
 
       const preview = previewVideoRef.current;
       if (!preview) {
+        scheduleNextTick();
         return;
       }
 
-      videoCaptureRunning = true;
+      tickRunning = true;
       try {
-        const clip = await capturePreviewVideoClip(preview, {
-          durationMs: AI_AUDIENCE_VIDEO_CLIP_DURATION_MS,
-        });
-        if (!clip || cancelled) {
-          return;
-        }
-
-        void mirrorAiAudienceContextEvent({
+        await captureAiAudienceMediaAndTick({
           roomSlug: savedChannel.slug,
-          kind: "video_clip",
-          url: clip,
-          capturedAt: Date.now(),
-        }).catch(() => {});
-      } finally {
-        videoCaptureRunning = false;
+          videoElement: preview,
+          captureScreenshot: (video) => capturePreviewScreenshot(video),
+          captureVideoClip: (video) =>
+            capturePreviewVideoClip(video, {
+              durationMs: AI_AUDIENCE_VIDEO_CLIP_DURATION_MS,
+            }),
+          mirrorContextEvent: (event) => mirrorAiAudienceContextEvent(event),
+          triggerTick: async (roomSlug) => {
+            await fetch("/api/ai-audience/tick", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({ roomSlug }),
+            });
+          },
+        });
+      } catch {}
+      finally {
+        tickRunning = false;
+        scheduleNextTick();
       }
     };
 
-    captureAndMirror();
-    const interval = setInterval(
-      captureAndMirror,
-      AI_AUDIENCE_SCREENSHOT_INTERVAL_MS,
-    );
-    const videoStart = setTimeout(captureAndMirrorVideo, 5_000);
-    const videoInterval = setInterval(
-      captureAndMirrorVideo,
-      AI_AUDIENCE_VIDEO_CLIP_INTERVAL_MS,
-    );
+    scheduleNextTick();
     return () => {
       cancelled = true;
-      clearInterval(interval);
-      clearTimeout(videoStart);
-      clearInterval(videoInterval);
+      if (tickTimer) {
+        clearTimeout(tickTimer);
+      }
     };
-  }, [bState, savedChannel.settings.ai_audience_enabled, savedChannel.slug]);
+  }, [
+    bState,
+    savedChannel.settings.ai_audience_enabled,
+    savedChannel.settings.ai_audience_intensity,
+    savedChannel.slug,
+  ]);
 
   // ─ Start broadcast: publish tracks + insert live_streams row ─
   const startBroadcast = useCallback(async () => {

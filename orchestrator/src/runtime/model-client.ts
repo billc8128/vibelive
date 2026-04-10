@@ -108,7 +108,7 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
 
 function buildUserMessageContent(persona: Persona, packet: ContextPacket) {
   const prompt = buildUserPrompt(persona, packet);
-  if (packet.latestScreenshotSummary && !packet.latestVideoClip?.url) {
+  if (!packet.latestScreenshot?.url && !packet.latestVideoClip?.url) {
     return prompt;
   }
 
@@ -123,7 +123,7 @@ function buildUserMessageContent(persona: Persona, packet: ContextPacket) {
     },
   ];
 
-  if (!packet.latestScreenshotSummary && packet.latestScreenshot?.url) {
+  if (packet.latestScreenshot?.url) {
     content.push({
       type: "image_url",
       image_url: {

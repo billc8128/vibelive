@@ -123,7 +123,7 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[0]?.content).not.toContain("Do not ask about hook names");
   });
 
-  it("uses screenshot summary instead of raw image input for chat generation", async () => {
+  it("keeps the screenshot summary in text context and also attaches the raw image", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -185,19 +185,31 @@ describe("OpenRouterModelClient", () => {
     const body = JSON.parse(String(requestInit?.body)) as {
       messages: Array<{ role: string; content: unknown }>;
     };
+    const content = body.messages[1]?.content as Array<Record<string, unknown>>;
+    const textPart = content.find((part) => part.type === "text") as
+      | { type: "text"; text: string }
+      | undefined;
 
-    expect(typeof body.messages[1]?.content).toBe("string");
-    expect(body.messages[1]?.content).toContain('"recentHumanChat"');
-    expect(body.messages[1]?.content).toContain('"recentBotChat"');
-    expect(body.messages[1]?.content).toContain('"commentGoal"');
-    expect(body.messages[1]?.content).toContain('"displayName": "Nova"');
-    expect(body.messages[1]?.content).toContain('"target": "streamer"');
-    expect(body.messages[1]?.content).toContain('"latestScreenshotSummary"');
-    expect(body.messages[1]?.content).not.toContain('"questionPriority"');
-    expect(body.messages[1]?.content).not.toContain('"suggestedAngleOrder"');
-    expect(body.messages[1]?.content).not.toContain('"commentStyleMix"');
-    expect(body.messages[1]?.content).not.toContain('"overfitAvoidance"');
-    expect(body.messages[1]?.content).not.toContain('"humanFeedbackRecovery"');
+    expect(content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "text" }),
+        expect.objectContaining({
+          type: "image_url",
+          image_url: { url: "data:image/jpeg;base64,abc123" },
+        }),
+      ]),
+    );
+    expect(textPart?.text).toContain('"recentHumanChat"');
+    expect(textPart?.text).toContain('"recentBotChat"');
+    expect(textPart?.text).toContain('"commentGoal"');
+    expect(textPart?.text).toContain('"displayName": "Nova"');
+    expect(textPart?.text).toContain('"target": "streamer"');
+    expect(textPart?.text).toContain('"latestScreenshotSummary"');
+    expect(textPart?.text).not.toContain('"questionPriority"');
+    expect(textPart?.text).not.toContain('"suggestedAngleOrder"');
+    expect(textPart?.text).not.toContain('"commentStyleMix"');
+    expect(textPart?.text).not.toContain('"overfitAvoidance"');
+    expect(textPart?.text).not.toContain('"humanFeedbackRecovery"');
   });
 
   it("attaches a video clip as model input when video context is available", async () => {

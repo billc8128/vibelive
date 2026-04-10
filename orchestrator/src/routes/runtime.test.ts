@@ -111,6 +111,35 @@ describe("runtime routes", () => {
     );
   });
 
+  it("triggers a client-driven runtime tick for an active room", async () => {
+    process.env.ORCHESTRATOR_SECRET = "expected-secret";
+
+    const tick = vi.fn();
+    const roomManager = new RoomManager();
+    roomManager.register("demo-room", {
+      stop() {},
+      tick,
+    });
+
+    const server = buildServer(undefined, roomManager);
+    const res = await server.inject({
+      method: "POST",
+      url: "/runtime/tick",
+      headers: { "x-orchestrator-secret": "expected-secret" },
+      payload: {
+        roomSlug: "demo-room",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(tick).toHaveBeenCalledTimes(1);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      action: "tick",
+      roomSlug: "demo-room",
+    });
+  });
+
   it("returns aggregated AI audience usage when authorized", async () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     process.env.ORCHESTRATOR_SECRET = "expected-secret";

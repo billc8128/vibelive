@@ -23,6 +23,44 @@ describe("RoomRuntime", () => {
     expect(pickTickDelayMs("high", 1)).toBe(60_000);
   });
 
+  it("does not auto-schedule ticks when the runtime is client-driven", async () => {
+    vi.useFakeTimers();
+    const tickSpy = vi.fn();
+
+    class TickSpyModelClient implements ModelClient {
+      async decide() {
+        tickSpy();
+        return { type: "hold" } as const;
+      }
+    }
+
+    const runtime = new RoomRuntime(
+      {
+        roomSlug: "demo-room",
+        roomTitle: "Demo Room",
+        projectStage: "coding",
+        codingTool: "cursor",
+        clientDriven: true,
+      },
+      {
+        observer: {
+          start: async () => {},
+          stop: async () => {},
+          getChatWindow: () => [],
+          getReactionWindow: () => [],
+        } as never,
+        agentRunner: new AgentRunner(new TickSpyModelClient()),
+        chatInjector: new ChatInjector("demo-room", null),
+      },
+    );
+
+    await runtime.start();
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(tickSpy).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("skips message publish when no screenshot is available but continues running", async () => {
     const runtime = new RoomRuntime({
       roomSlug: "demo-room",
