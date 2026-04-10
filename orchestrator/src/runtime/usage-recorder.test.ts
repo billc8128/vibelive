@@ -20,11 +20,16 @@ describe("InMemoryUsageRecorder", () => {
       decision: "speak",
       hasScreenshot: true,
       hasVideo: true,
+      attachedImage: false,
+      usedScreenshotSummary: true,
       usage: {
         prompt_tokens: 1200,
         completion_tokens: 50,
         total_tokens: 1250,
         cost: 0.00075,
+        prompt_tokens_details: {
+          video_tokens: 120,
+        },
       },
     });
     recorder.record({
@@ -35,6 +40,8 @@ describe("InMemoryUsageRecorder", () => {
       decision: "summary",
       hasScreenshot: true,
       hasVideo: false,
+      attachedImage: true,
+      usedScreenshotSummary: false,
       usage: {
         prompt_tokens: 800,
         completion_tokens: 100,
@@ -63,6 +70,24 @@ describe("InMemoryUsageRecorder", () => {
       reasoningTokens: 3,
       videoRequests: 1,
       screenshotRequests: 2,
+      imageAttachments: 1,
+      screenshotSummaryBackedRequests: 1,
+      videoTokens: 120,
+    });
+    expect(summary.recentEvents[0]).toMatchObject({
+      operation: "screenshot_summary",
+      attachedImage: true,
+      usedScreenshotSummary: false,
+    });
+    expect(summary.recentEvents[1]).toMatchObject({
+      operation: "agent_decide",
+      attachedImage: false,
+      usedScreenshotSummary: true,
+      usage: {
+        prompt_tokens_details: {
+          video_tokens: 120,
+        },
+      },
     });
     expect(summary.byOperation).toEqual(
       expect.arrayContaining([
@@ -110,12 +135,15 @@ describe("PostgresUsageRecorder", () => {
             decision: "speak",
             has_screenshot: true,
             has_video: true,
+            attached_image: false,
+            used_screenshot_summary: true,
             prompt_tokens: 1000,
             completion_tokens: 80,
             total_tokens: 1080,
             cached_tokens: 50,
             cache_write_tokens: 0,
             audio_tokens: 0,
+            video_tokens: 90,
             reasoning_tokens: 12,
             cost: "0.00074",
             usage: {
@@ -123,6 +151,9 @@ describe("PostgresUsageRecorder", () => {
               completion_tokens: 80,
               total_tokens: 1080,
               cost: 0.00074,
+              prompt_tokens_details: {
+                video_tokens: 90,
+              },
             },
           },
         ],
@@ -144,6 +175,8 @@ describe("PostgresUsageRecorder", () => {
       decision: "speak",
       hasScreenshot: true,
       hasVideo: true,
+      attachedImage: false,
+      usedScreenshotSummary: true,
       usage: {
         prompt_tokens: 1000,
         completion_tokens: 80,
@@ -151,6 +184,7 @@ describe("PostgresUsageRecorder", () => {
         cost: 0.00074,
         prompt_tokens_details: {
           cached_tokens: 50,
+          video_tokens: 90,
         },
         completion_tokens_details: {
           reasoning_tokens: 12,
@@ -189,6 +223,8 @@ describe("PostgresUsageRecorder", () => {
       cachedTokens: 50,
       reasoningTokens: 12,
       videoRequests: 1,
+      screenshotSummaryBackedRequests: 1,
+      videoTokens: 90,
     });
     expect(summary.byPersona).toEqual([
       expect.objectContaining({
@@ -196,5 +232,14 @@ describe("PostgresUsageRecorder", () => {
         totalCost: 0.00074,
       }),
     ]);
+    expect(summary.recentEvents[0]).toMatchObject({
+      attachedImage: false,
+      usedScreenshotSummary: true,
+      usage: {
+        prompt_tokens_details: {
+          video_tokens: 90,
+        },
+      },
+    });
   });
 });

@@ -11,6 +11,7 @@ export interface OpenRouterUsage {
     cached_tokens?: number;
     cache_write_tokens?: number;
     audio_tokens?: number;
+    video_tokens?: number;
   };
   completion_tokens_details?: {
     reasoning_tokens?: number;
@@ -30,6 +31,8 @@ export interface AiUsageEventInput {
   decision?: string;
   hasScreenshot: boolean;
   hasVideo: boolean;
+  attachedImage: boolean;
+  usedScreenshotSummary: boolean;
   usage: OpenRouterUsage;
 }
 
@@ -57,9 +60,12 @@ export interface AiUsageSummary {
     cachedTokens: number;
     cacheWriteTokens: number;
     audioTokens: number;
+    videoTokens: number;
     reasoningTokens: number;
     videoRequests: number;
     screenshotRequests: number;
+    imageAttachments: number;
+    screenshotSummaryBackedRequests: number;
   };
   byOperation: UsageBucket[];
   byModel: UsageBucket[];
@@ -85,12 +91,15 @@ interface PostgresUsageRow extends QueryResultRow {
   decision?: string | null;
   has_screenshot?: boolean;
   has_video?: boolean;
+  attached_image?: boolean;
+  used_screenshot_summary?: boolean;
   prompt_tokens?: number | string | null;
   completion_tokens?: number | string | null;
   total_tokens?: number | string | null;
   cached_tokens?: number | string | null;
   cache_write_tokens?: number | string | null;
   audio_tokens?: number | string | null;
+  video_tokens?: number | string | null;
   reasoning_tokens?: number | string | null;
   cost?: number | string | null;
   usage?: OpenRouterUsage | null;
@@ -121,16 +130,28 @@ create table if not exists ai_audience_usage_events (
   decision text,
   has_screenshot boolean not null default false,
   has_video boolean not null default false,
+  attached_image boolean not null default false,
+  used_screenshot_summary boolean not null default false,
   prompt_tokens integer not null default 0,
   completion_tokens integer not null default 0,
   total_tokens integer not null default 0,
   cached_tokens integer not null default 0,
   cache_write_tokens integer not null default 0,
   audio_tokens integer not null default 0,
+  video_tokens integer not null default 0,
   reasoning_tokens integer not null default 0,
   cost numeric(20, 10) not null default 0,
   usage jsonb not null default '{}'::jsonb
 );
+
+alter table ai_audience_usage_events
+  add column if not exists attached_image boolean not null default false;
+
+alter table ai_audience_usage_events
+  add column if not exists used_screenshot_summary boolean not null default false;
+
+alter table ai_audience_usage_events
+  add column if not exists video_tokens integer not null default 0;
 
 create index if not exists ai_audience_usage_created_idx
   on ai_audience_usage_events(created_at desc);
@@ -210,9 +231,12 @@ function summarizeEvents(events: AiUsageEvent[]): AiUsageSummary {
     cachedTokens: 0,
     cacheWriteTokens: 0,
     audioTokens: 0,
+    videoTokens: 0,
     reasoningTokens: 0,
     videoRequests: 0,
     screenshotRequests: 0,
+    imageAttachments: 0,
+    screenshotSummaryBackedRequests: 0,
   };
   const byOperation = new Map<string, UsageBucket>();
   const byModel = new Map<string, UsageBucket>();
@@ -234,11 +258,16 @@ function summarizeEvents(events: AiUsageEvent[]): AiUsageSummary {
     totals.audioTokens += numeric(
       event.usage.prompt_tokens_details?.audio_tokens,
     );
+    totals.videoTokens += numeric(
+      event.usage.prompt_tokens_details?.video_tokens,
+    );
     totals.reasoningTokens += numeric(
       event.usage.completion_tokens_details?.reasoning_tokens,
     );
     if (event.hasVideo) totals.videoRequests += 1;
     if (event.hasScreenshot) totals.screenshotRequests += 1;
+    if (event.attachedImage) totals.imageAttachments += 1;
+    if (event.usedScreenshotSummary) totals.screenshotSummaryBackedRequests += 1;
 
     pushBucket(byOperation, event.operation, event);
     pushBucket(byModel, event.modelName, event);
@@ -276,6 +305,8 @@ function fromPostgresRow(row: PostgresUsageRow): AiUsageEvent {
     decision: row.decision ?? undefined,
     hasScreenshot: row.has_screenshot ?? false,
     hasVideo: row.has_video ?? false,
+    attachedImage: row.attached_image ?? false,
+    usedScreenshotSummary: row.used_screenshot_summary ?? false,
     usage: {
       ...(row.usage ?? {}),
       prompt_tokens: numeric(row.prompt_tokens),
@@ -287,6 +318,7 @@ function fromPostgresRow(row: PostgresUsageRow): AiUsageEvent {
         cached_tokens: numeric(row.cached_tokens),
         cache_write_tokens: numeric(row.cache_write_tokens),
         audio_tokens: numeric(row.audio_tokens),
+        video_tokens: numeric(row.video_tokens),
       },
       completion_tokens_details: {
         ...(row.usage?.completion_tokens_details ?? {}),
@@ -328,6 +360,9 @@ export class InMemoryUsageRecorder implements UsageRecorder {
       totalTokens: event.usage.total_tokens,
       hasScreenshot: event.hasScreenshot,
       hasVideo: event.hasVideo,
+      attachedImage: event.attachedImage,
+      usedScreenshotSummary: event.usedScreenshotSummary,
+      videoTokens: event.usage.prompt_tokens_details?.video_tokens,
     });
   }
 
@@ -383,18 +418,22 @@ insert into ai_audience_usage_events (
   decision,
   has_screenshot,
   has_video,
+  attached_image,
+  used_screenshot_summary,
   prompt_tokens,
   completion_tokens,
   total_tokens,
   cached_tokens,
   cache_write_tokens,
   audio_tokens,
+  video_tokens,
   reasoning_tokens,
   cost,
   usage
 ) values (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+  $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+  $21, $22, $23
 )
 `,
         [
@@ -409,12 +448,15 @@ insert into ai_audience_usage_events (
           event.decision ?? null,
           event.hasScreenshot,
           event.hasVideo,
+          event.attachedImage,
+          event.usedScreenshotSummary,
           numeric(event.usage.prompt_tokens),
           numeric(event.usage.completion_tokens),
           numeric(event.usage.total_tokens),
           numeric(event.usage.prompt_tokens_details?.cached_tokens),
           numeric(event.usage.prompt_tokens_details?.cache_write_tokens),
           numeric(event.usage.prompt_tokens_details?.audio_tokens),
+          numeric(event.usage.prompt_tokens_details?.video_tokens),
           numeric(event.usage.completion_tokens_details?.reasoning_tokens),
           numeric(event.usage.cost),
           event.usage,

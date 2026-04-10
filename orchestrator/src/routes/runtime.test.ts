@@ -124,6 +124,8 @@ describe("runtime routes", () => {
       decision: "speak",
       hasScreenshot: true,
       hasVideo: true,
+      attachedImage: false,
+      usedScreenshotSummary: true,
       usage: {
         prompt_tokens: 1000,
         completion_tokens: 50,

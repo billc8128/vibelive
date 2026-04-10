@@ -7,6 +7,7 @@ import {
   type AiAudienceUsageEvent,
   type AiAudienceUsageSummary,
 } from "@/lib/orchestrator/client";
+import { describeAiAudienceContext } from "@/lib/orchestrator/usage-display";
 
 export const metadata: Metadata = {
   title: "Admin | VibeLive",
@@ -22,9 +23,12 @@ const EMPTY_USAGE_SUMMARY: AiAudienceUsageSummary = {
     cachedTokens: 0,
     cacheWriteTokens: 0,
     audioTokens: 0,
+    videoTokens: 0,
     reasoningTokens: 0,
     videoRequests: 0,
     screenshotRequests: 0,
+    imageAttachments: 0,
+    screenshotSummaryBackedRequests: 0,
   },
   byOperation: [],
   byModel: [],
@@ -244,9 +248,7 @@ function RecentEvents({ events }: { events: AiAudienceUsageEvent[] }) {
                     {formatNumber(event.usage.total_tokens ?? 0)}
                   </td>
                   <td className="py-3 text-text-secondary">
-                    {event.hasVideo ? "video " : ""}
-                    {event.hasScreenshot ? "screen" : ""}
-                    {!event.hasVideo && !event.hasScreenshot ? "text" : ""}
+                    {describeAiAudienceContext(event)}
                   </td>
                 </tr>
               ))}
@@ -306,9 +308,9 @@ export default async function AdminPage() {
             detail={`${formatNumber(summary.totals.promptTokens)} input / ${formatNumber(summary.totals.completionTokens)} output`}
           />
           <MetricCard
-            label="video requests"
-            value={formatNumber(summary.totals.videoRequests)}
-            detail={`${formatNumber(summary.totals.screenshotRequests)} calls included screenshot context`}
+            label="summary-backed"
+            value={formatNumber(summary.totals.screenshotSummaryBackedRequests)}
+            detail={`${formatNumber(summary.totals.imageAttachments)} direct image inputs / ${formatNumber(summary.totals.videoRequests)} video-attached calls / ${formatNumber(summary.totals.screenshotRequests)} screenshot-context calls`}
             accent="green"
           />
           <MetricCard
@@ -316,7 +318,7 @@ export default async function AdminPage() {
             value={formatNumber(
               summary.totals.cachedTokens + summary.totals.cacheWriteTokens,
             )}
-            detail={`${formatNumber(summary.totals.reasoningTokens)} reasoning tokens / ${formatNumber(summary.totals.audioTokens)} audio tokens`}
+            detail={`${formatNumber(summary.totals.reasoningTokens)} reasoning / ${formatNumber(summary.totals.audioTokens)} audio / ${formatNumber(summary.totals.videoTokens)} video tokens`}
             accent="pink"
           />
         </section>

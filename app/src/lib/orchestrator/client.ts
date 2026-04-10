@@ -22,9 +22,12 @@ export interface AiAudienceUsageTotals {
   cachedTokens: number;
   cacheWriteTokens: number;
   audioTokens: number;
+  videoTokens: number;
   reasoningTokens: number;
   videoRequests: number;
   screenshotRequests: number;
+  imageAttachments: number;
+  screenshotSummaryBackedRequests: number;
 }
 
 export interface AiAudienceUsageBucket {
@@ -48,6 +51,8 @@ export interface AiAudienceUsageEvent {
   decision?: string;
   hasScreenshot: boolean;
   hasVideo: boolean;
+  attachedImage: boolean;
+  usedScreenshotSummary: boolean;
   usage: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -57,6 +62,7 @@ export interface AiAudienceUsageEvent {
       cached_tokens?: number;
       cache_write_tokens?: number;
       audio_tokens?: number;
+      video_tokens?: number;
     };
     completion_tokens_details?: {
       reasoning_tokens?: number;

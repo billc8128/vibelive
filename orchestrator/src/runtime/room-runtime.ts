@@ -157,6 +157,8 @@ export class RoomRuntime {
         hasScreenshot:
           !!packet.latestScreenshot || !!packet.latestScreenshotSummary,
         hasVideo: !!packet.latestVideoClip,
+        attachedImage: !!packet.latestScreenshot && !packet.latestScreenshotSummary,
+        usedScreenshotSummary: !!packet.latestScreenshotSummary,
       });
       if (decision.type !== "speak") {
         heldCount += 1;
@@ -237,6 +239,8 @@ export class RoomRuntime {
                 decision: summary ? "summary" : "hold",
                 hasScreenshot: true,
                 hasVideo: false,
+                attachedImage: true,
+                usedScreenshotSummary: false,
               },
             );
           } catch (error) {
@@ -276,6 +280,8 @@ export class RoomRuntime {
       decision?: string;
       hasScreenshot: boolean;
       hasVideo: boolean;
+      attachedImage: boolean;
+      usedScreenshotSummary: boolean;
     },
   ) {
     if (!usage) {
@@ -293,6 +299,8 @@ export class RoomRuntime {
         decision: metadata.decision,
         hasScreenshot: metadata.hasScreenshot,
         hasVideo: metadata.hasVideo,
+        attachedImage: metadata.attachedImage,
+        usedScreenshotSummary: metadata.usedScreenshotSummary,
         usage,
       }),
     ).catch((error) => {
