@@ -379,6 +379,9 @@ export class OpenRouterModelClient implements ModelClient {
         model: this.config.name,
         temperature: 0.8,
         max_tokens: 150,
+        reasoning: {
+          effort: "medium",
+        },
         messages: [
           {
             role: "system",

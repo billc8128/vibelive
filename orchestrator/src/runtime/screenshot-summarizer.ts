@@ -211,6 +211,9 @@ export class OpenRouterScreenshotSummarizer implements ScreenshotSummarizer {
         model: this.config.name,
         temperature: 0.1,
         max_tokens: 600,
+        reasoning: {
+          effort: "low",
+        },
         messages: [
           {
             role: "system",

@@ -84,6 +84,7 @@ describe("OpenRouterModelClient", () => {
       model: string;
       temperature: number;
       max_tokens: number;
+      reasoning?: { effort: string };
       response_format?: { type: string };
       messages: Array<{ role: string; content: unknown }>;
     };
@@ -91,6 +92,7 @@ describe("OpenRouterModelClient", () => {
     expect(body.model).toBe("anthropic/claude-sonnet-4.6");
     expect(body.temperature).toBe(0.8);
     expect(body.max_tokens).toBe(150);
+    expect(body.reasoning).toEqual({ effort: "medium" });
     expect(body).not.toHaveProperty("response_format");
     expect(body.messages[0]?.content).toContain(
       "You are Patch",
