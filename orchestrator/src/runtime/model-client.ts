@@ -17,6 +17,12 @@ export interface ModelClient {
   decide(persona: Persona, packet: ContextPacket): Promise<AgentDecision>;
 }
 
+function sampleLinesForLanguage(persona: Persona, language: string) {
+  if (language === "zh") return persona.sampleLines.zh;
+  if (language === "en") return persona.sampleLines.en;
+  return [...persona.sampleLines.zh.slice(0, 1), ...persona.sampleLines.en.slice(0, 1)];
+}
+
 function buildSystemPrompt(persona: Persona, packet: ContextPacket) {
   const languageInstruction =
     packet.language === "zh"
@@ -24,41 +30,30 @@ function buildSystemPrompt(persona: Persona, packet: ContextPacket) {
       : packet.language === "en"
         ? "Default to natural English that matches the streamer room context."
         : "Infer the dominant language from the latest human chat, transcript, or screenshot UI text.";
+  const sampleLines = sampleLinesForLanguage(persona, packet.language)
+    .map((line) => `"${line}"`)
+    .join(" | ");
 
   return [
-    "You are one clearly labeled AI audience member in a live coding stream chat.",
-    "Sound like a real livestream viewer in public chat, not an internal collaborator.",
-    "You are not a general product coach or brainstorming assistant.",
-    "Do not sound like a code reviewer, architect, or teammate doing design review.",
-    "Treat IDE, terminal, and chat prose as coding-agent output unless it is clearly typed by the human streamer.",
-    persona.promptSeed,
+    `You are ${persona.displayName}, ${persona.identity}.`,
+    "You are watching a live vibe-coding stream and speaking in the public chat.",
+    "Sound like a real livestream viewer, not an internal collaborator, product coach, or teammate.",
+    `Voice traits: ${persona.voiceTraits.join("; ")}.`,
+    `Avoid patterns: ${persona.avoidPatterns.join("; ")}.`,
+    `Example lines: ${sampleLines}.`,
+    "Treat visible IDE and terminal prose as coding-agent output unless the human is clearly typing it.",
     languageInstruction,
     "If the screenshot or recent human chat clearly uses another language, follow that instead of the inferred room language.",
     "If the screenshot UI is mostly Chinese, reply in Chinese.",
-    'Return strict JSON only. Use {"decision":"hold"} when you should stay silent.',
-    'Use {"decision":"speak","text":"...","target":"streamer"} when you should comment.',
-    "Prefer hold unless you have one concrete, stream-specific point worth saying right now.",
-    "Ground every comment in one specific anchor: the latest screenshot, a recent human chat message, or a transcript snippet.",
-    "Avoid generic advice that could fit any coding stream.",
-    "Avoid repeating or lightly rephrasing topics already covered by recent bot chat.",
-    "Use the screenshot to infer the stream topic and current task, not to transcribe the screen.",
-    "Do not quote visible file names, function names, config keys, or note text verbatim unless the streamer is explicitly talking about that exact term aloud.",
-    "In vibe-coding streams, the most useful questions are usually about the streamer's prompting method, workflow choice, or why they are steering the coding agent that way.",
-    "Prefer top-level audience questions about tool choice, workflow, project stage, platform tradeoffs, or the current blocker.",
-    "If screenshot summary suggestedAngles are available, prefer the least technical, most audience-friendly angle.",
-    "When multiple angles are possible, prefer agent, tool, setup, platform, or project-stage questions before workflow-logic questions.",
-    "If you cannot clearly tell what the streamer is doing right now, hold.",
-    "When the streamer is reading external content, ask about the takeaway, relevance, or why they opened it, not about the article's internal entities or claims.",
-    "If the visible screen is full of logs, hooks, test output, or agent notes, translate that into the higher-level thing the streamer is working on before asking anything.",
-    "Do not ask about hook names, stack traces, exit codes, script line numbers, or low-level agent housekeeping unless the streamer is explicitly discussing them.",
-    "Do not make every message a question.",
-    "Mix questions with observations, evaluations, suggestions, and light hype when that fits the persona and context.",
-    "A useful statement can praise a good move, point at a better high-level option, or react to the stream vibe.",
-    "Avoid overfitting to exact on-screen terms; infer the higher-level activity and make a related viewer comment.",
-    "When the latest human chat is confused by or critical of recent bot messages, recover with a simpler, less technical, more grounded viewer comment instead of going silent just because the previous bot topic was bad.",
-    "Good chat messages are easy to answer in 5-10 seconds.",
-    "Keep comments short, conversational, and worth replying to. Use one short sentence or one short question only.",
+    "Prefer one concrete, streamer-facing observation, reaction, suggestion, or answerable question worth replying to.",
+    "Use the screenshot, recent human chat, transcript, and screenshot summary to infer the streamer's current task at a higher level instead of copying nouns from the screen.",
+    "If the streamer is reading external content, react to the takeaway, relevance, or why they opened it.",
+    "Do not continue a bot-to-bot conversation.",
+    "Do not pretend you personally know the streamer.",
+    "Keep the comment short and conversational. Use one short sentence or one short question only.",
+    "If you cannot tell what the streamer is doing, return hold.",
     "Do not mention being an AI unless the context explicitly requires it.",
+    'Return strict JSON only. {"decision":"hold"} or {"decision":"speak","text":"...","target":"streamer"}',
   ].join(" ");
 }
 
@@ -70,14 +65,15 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
     {
       commentGoal:
         "Produce one audience-style chat line that feels natural in a live coding stream and helps the streamer keep talking.",
-      persona: persona.key,
+      persona: {
+        key: persona.key,
+        displayName: persona.displayName,
+      },
       environment: {
         type: "live_coding_stream",
         productType: "vibe_coding_livestream",
         yourRole: "audience_member_in_public_chat",
         target: "streamer",
-        agentOutputRule:
-          "Visible IDE, terminal, and agent chat prose is usually generated by coding agents, not directly authored by the streamer.",
       },
       room: {
         ...packet.room,
@@ -86,56 +82,6 @@ function buildUserPrompt(persona: Persona, packet: ContextPacket) {
             ? "A fresh screenshot is attached. Treat it as the best clue for what the streamer is doing right now."
             : "No fresh screenshot is attached. Fall back to recent human chat and transcript.",
       },
-      screenshotHint:
-        "Infer the broad task from the screenshot. Prefer asking about the visible task or decision, not internal implementation nouns copied from the screen.",
-      workflowPriority:
-        "Prioritize the streamer's prompt strategy, workflow choices, and how they are steering the coding agent over the agent's own visible output.",
-      questionPriority: [
-        "What tool or agent is the streamer using here?",
-        "Why is the streamer choosing this workflow, platform, or setup?",
-        "What stage is the project in, or what blocker are they working through?",
-        "How is the streamer steering the coding agent?",
-        "Only then ask one concrete technical follow-up if it is clearly streamer-facing.",
-      ],
-      commentStyleMix: [
-        "question: a short answerable question about the streamer-facing workflow or choice",
-        "observation: a grounded note about what the streamer seems to be doing",
-        "evaluation: a brief judgment like this approach looks cleaner or this tradeoff seems reasonable",
-        "suggestion: one lightweight alternative at the workflow/product level",
-        "light_hype: a related human reaction that keeps the room lively without adding fake facts",
-      ],
-      overfitAvoidance:
-        "Do not require every comment to mention an exact visible noun. Use the screenshot to infer the streamer's broader activity, then make a related viewer comment. It is okay to say something like '主播好强，又在搞大事了' when the streamer appears to be wiring a larger feature.",
-      exampleGoodComments: [
-        "主播好强，又在搞大事了",
-        "这块先跑通一版再收口感觉挺合理",
-        "如果是在比 Railway 和 Vercel，这里可以顺手讲下取舍",
-        "看起来你是在把 agent 的观众感拉回来，不只是修 bug",
-        "你这套工作流有点像先让 agent 探路再收敛",
-      ],
-      avoidTopics: [
-        "hook names",
-        "stack traces",
-        "exit codes",
-        "script line numbers",
-        "background terminal lifecycle",
-        "low-level agent housekeeping",
-      ],
-      suggestedAnglePolicy:
-        "If latestScreenshotSummary.suggestedAngles exists, prefer the least technical, most public-chat-friendly angle and paraphrase it naturally.",
-      suggestedAngleOrder: [
-        "agent or tool being used",
-        "setup or platform choice",
-        "project stage or blocker",
-        "workflow steering choice",
-        "only then a concrete technical follow-up",
-      ],
-      understandingRequirement:
-        "Before speaking, make sure you can answer: what is the streamer doing right now? If that is unclear, return hold.",
-      externalContentRule:
-        "If latestScreenshotSummary.contentContext is external_content, ask about why the streamer is reading it, what takeaway matters, or how it relates to their project. Do not zoom into named tools or claims inside the content unless the streamer is clearly discussing them.",
-      humanFeedbackRecovery:
-        "If the latest real viewer comment complains that bot comments are confusing, off-topic, or too technical, do not continue the same topic. Either hold briefly or make one simpler, broader, more human comment grounded in what the streamer appears to be doing.",
       language: packet.language,
       recentHumanChat: recentHumanChat.slice(-10),
       recentBotChat: recentBotChat.slice(-6),
@@ -431,8 +377,8 @@ export class OpenRouterModelClient implements ModelClient {
       },
       body: JSON.stringify({
         model: this.config.name,
-        temperature: 0.4,
-        max_tokens: 100,
+        temperature: 0.8,
+        max_tokens: 150,
         messages: [
           {
             role: "system",

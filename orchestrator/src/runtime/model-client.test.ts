@@ -82,60 +82,45 @@ describe("OpenRouterModelClient", () => {
     ];
     const body = JSON.parse(String(requestInit?.body)) as {
       model: string;
+      temperature: number;
+      max_tokens: number;
       response_format?: { type: string };
       messages: Array<{ role: string; content: unknown }>;
     };
 
     expect(body.model).toBe("anthropic/claude-sonnet-4.6");
+    expect(body.temperature).toBe(0.8);
+    expect(body.max_tokens).toBe(150);
     expect(body).not.toHaveProperty("response_format");
     expect(body.messages[0]?.content).toContain(
-      "Sound like a real livestream viewer in public chat",
+      "You are Patch",
     );
     expect(body.messages[0]?.content).toContain(
-      "Do not sound like a code reviewer, architect, or teammate doing design review.",
+      "You are watching a live vibe-coding stream and speaking in the public chat.",
     );
     expect(body.messages[0]?.content).toContain(
-      "Do not quote visible file names, function names, config keys, or note text verbatim",
+      "Voice traits:",
     );
     expect(body.messages[0]?.content).toContain(
-      "Treat IDE, terminal, and chat prose as coding-agent output unless it is clearly typed by the human streamer.",
+      "Example lines:",
     );
     expect(body.messages[0]?.content).toContain(
       "If the screenshot UI is mostly Chinese, reply in Chinese.",
     );
     expect(body.messages[0]?.content).toContain(
-      "the most useful questions are usually about the streamer's prompting method, workflow choice",
+      'Return strict JSON only. {"decision":"hold"} or {"decision":"speak","text":"...","target":"streamer"}',
     );
     expect(body.messages[0]?.content).toContain(
-      "Prefer top-level audience questions about tool choice, workflow, project stage, platform tradeoffs, or the current blocker.",
+      "Treat visible IDE and terminal prose as coding-agent output unless the human is clearly typing it.",
     );
     expect(body.messages[0]?.content).toContain(
-      "Do not ask about hook names, stack traces, exit codes, script line numbers, or low-level agent housekeeping unless the streamer is explicitly discussing them.",
+      "Do not continue a bot-to-bot conversation.",
     );
     expect(body.messages[0]?.content).toContain(
-      "If screenshot summary suggestedAngles are available, prefer the least technical, most audience-friendly angle.",
+      "If you cannot tell what the streamer is doing, return hold.",
     );
-    expect(body.messages[0]?.content).toContain(
-      "When multiple angles are possible, prefer agent, tool, setup, platform, or project-stage questions before workflow-logic questions.",
-    );
-    expect(body.messages[0]?.content).toContain(
-      "If you cannot clearly tell what the streamer is doing right now, hold.",
-    );
-    expect(body.messages[0]?.content).toContain(
-      "When the streamer is reading external content, ask about the takeaway, relevance, or why they opened it",
-    );
-    expect(body.messages[0]?.content).toContain(
-      "Do not make every message a question.",
-    );
-    expect(body.messages[0]?.content).toContain(
-      "Mix questions with observations, evaluations, suggestions, and light hype",
-    );
-    expect(body.messages[0]?.content).toContain(
-      "Avoid overfitting to exact on-screen terms",
-    );
-    expect(body.messages[0]?.content).toContain(
-      "When the latest human chat is confused by or critical of recent bot messages",
-    );
+    expect(body.messages[0]?.content).not.toContain("Do not quote visible file names");
+    expect(body.messages[0]?.content).not.toContain("Do not ask about hook names");
   });
 
   it("uses screenshot summary instead of raw image input for chat generation", async () => {
@@ -205,21 +190,14 @@ describe("OpenRouterModelClient", () => {
     expect(body.messages[1]?.content).toContain('"recentHumanChat"');
     expect(body.messages[1]?.content).toContain('"recentBotChat"');
     expect(body.messages[1]?.content).toContain('"commentGoal"');
-    expect(body.messages[1]?.content).toContain('"screenshotHint"');
-    expect(body.messages[1]?.content).toContain('"productType": "vibe_coding_livestream"');
-    expect(body.messages[1]?.content).toContain('"agentOutputRule"');
-    expect(body.messages[1]?.content).toContain('"workflowPriority"');
-    expect(body.messages[1]?.content).toContain('"questionPriority"');
-    expect(body.messages[1]?.content).toContain('"avoidTopics"');
-    expect(body.messages[1]?.content).toContain('"suggestedAnglePolicy"');
-    expect(body.messages[1]?.content).toContain('"suggestedAngleOrder"');
-    expect(body.messages[1]?.content).toContain('"understandingRequirement"');
-    expect(body.messages[1]?.content).toContain('"externalContentRule"');
-    expect(body.messages[1]?.content).toContain('"commentStyleMix"');
-    expect(body.messages[1]?.content).toContain('"overfitAvoidance"');
-    expect(body.messages[1]?.content).toContain('"exampleGoodComments"');
-    expect(body.messages[1]?.content).toContain('"humanFeedbackRecovery"');
+    expect(body.messages[1]?.content).toContain('"displayName": "Nova"');
+    expect(body.messages[1]?.content).toContain('"target": "streamer"');
     expect(body.messages[1]?.content).toContain('"latestScreenshotSummary"');
+    expect(body.messages[1]?.content).not.toContain('"questionPriority"');
+    expect(body.messages[1]?.content).not.toContain('"suggestedAngleOrder"');
+    expect(body.messages[1]?.content).not.toContain('"commentStyleMix"');
+    expect(body.messages[1]?.content).not.toContain('"overfitAvoidance"');
+    expect(body.messages[1]?.content).not.toContain('"humanFeedbackRecovery"');
   });
 
   it("attaches a video clip as model input when video context is available", async () => {
