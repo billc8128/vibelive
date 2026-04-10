@@ -5,7 +5,7 @@
     "userId": "user_101",
     "username": "code_ninja",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "来了 今天继续搞全栈吗",
+    "content": "哇，Cursor 自动补全的速度也太快了吧！",
     "timestamp": "2025-03-20T14:05:00Z",
     "type": "text"
   },
@@ -15,8 +15,8 @@
     "userId": "user_102",
     "username": "pixel_lover",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "前排",
-    "timestamp": "2025-03-20T14:05:08Z",
+    "content": "这个组件的状态管理思路很清晰",
+    "timestamp": "2025-03-20T14:05:30Z",
     "type": "text"
   },
   {
@@ -35,7 +35,7 @@
     "userId": "user_103",
     "username": "retro_gamer",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "刚来 进度到哪了",
+    "content": "大家好！我刚来，现在在做什么？",
     "timestamp": "2025-03-20T14:06:15Z",
     "type": "text"
   },
@@ -45,7 +45,7 @@
     "userId": "user_104",
     "username": "ai_enthusiast",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "在做前端 用Cursor写的 刚把路由搭好",
+    "content": "正在用 Cursor 搭建一个全栈待办事项应用的前端部分",
     "timestamp": "2025-03-20T14:06:45Z",
     "type": "text"
   },
@@ -55,7 +55,7 @@
     "userId": "user_105",
     "username": "debug_master",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "那个 useEffect 依赖数组空的 后面切页面会有问题吧",
+    "content": "等等，那个 useEffect 是不是缺少了依赖项？",
     "timestamp": "2025-03-20T14:07:00Z",
     "type": "text"
   },
@@ -65,7 +65,7 @@
     "userId": "user_106",
     "username": "vibe_coder",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "666",
+    "content": "想用！这个功能太酷了",
     "timestamp": "2025-03-20T14:07:30Z",
     "type": "reaction"
   },
@@ -75,7 +75,7 @@
     "userId": "user_101",
     "username": "code_ninja",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "表单验证一把就写出来了 AI确实省事",
+    "content": "AI 一次性就把整个表单验证逻辑写完了，省了好多时间",
     "timestamp": "2025-03-20T14:08:00Z",
     "type": "text"
   },
@@ -85,7 +85,7 @@
     "userId": "user_107",
     "username": "fullstack_fan",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "数据库用的啥 Supabase?",
+    "content": "请问这个项目用的是什么数据库？",
     "timestamp": "2025-03-20T14:08:30Z",
     "type": "text"
   },
@@ -95,7 +95,7 @@
     "userId": "user_108",
     "username": "newbie_dev",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "第一次看这种直播 比看教程有意思多了",
+    "content": "作为新手，看这种直播真的学到好多",
     "timestamp": "2025-03-20T14:09:00Z",
     "type": "text"
   },
@@ -105,7 +105,7 @@
     "userId": "user_201",
     "username": "design_geek",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "来看看 V0 出的组件质量怎么样",
+    "content": "V0 生成的 UI 组件质量真的越来越好了",
     "timestamp": "2025-03-20T14:10:00Z",
     "type": "text"
   },
@@ -115,7 +115,7 @@
     "userId": "user_202",
     "username": "tailwind_pro",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "渐变用 bg-gradient-to-r 就行 不用自己写css",
+    "content": "这个渐变效果用 Tailwind 实现得很优雅",
     "timestamp": "2025-03-20T14:10:30Z",
     "type": "text"
   },
@@ -135,7 +135,7 @@
     "userId": "user_203",
     "username": "css_wizard",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "这个布局换grid会不会更好 flex嵌套太多了",
+    "content": "建议用 grid 替代 flex 来做这个布局，响应式更好处理",
     "timestamp": "2025-03-20T14:11:30Z",
     "type": "text"
   },
@@ -145,9 +145,9 @@
     "userId": "user_204",
     "username": "ux_lover",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "确实 grid在这种场景更合适",
-    "timestamp": "2025-03-20T14:11:45Z",
-    "type": "text"
+    "content": "有趣！这种设计思路值得学习",
+    "timestamp": "2025-03-20T14:12:00Z",
+    "type": "reaction"
   },
   {
     "id": "msg_16",
@@ -155,7 +155,7 @@
     "userId": "user_205",
     "username": "mobile_first",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "手机上看会不会炸掉? 感觉没做响应式",
+    "content": "手机端适配考虑了吗？现在看起来只有桌面版",
     "timestamp": "2025-03-20T14:12:30Z",
     "type": "text"
   },
@@ -165,118 +165,88 @@
     "userId": "user_201",
     "username": "design_geek",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "哈哈 桌面端先跑起来再说",
-    "timestamp": "2025-03-20T14:12:42Z",
+    "content": "这个动画效果太赞了！帧率也很流畅",
+    "timestamp": "2025-03-20T14:13:00Z",
     "type": "text"
   },
   {
     "id": "msg_18",
-    "streamId": "stream_2",
-    "userId": "user_202",
-    "username": "tailwind_pro",
+    "streamId": "stream_3",
+    "userId": "user_301",
+    "username": "ml_explorer",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "这个hover动画挺丝滑的",
-    "timestamp": "2025-03-20T14:13:00Z",
+    "content": "用 Replit 跑模型训练会不会很慢？",
+    "timestamp": "2025-03-20T14:14:00Z",
     "type": "text"
   },
   {
     "id": "msg_19",
     "streamId": "stream_3",
-    "userId": "user_301",
-    "username": "ml_explorer",
+    "userId": "user_302",
+    "username": "data_hacker",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "Replit跑模型会不会很慢啊 内存够吗",
-    "timestamp": "2025-03-20T14:14:00Z",
+    "content": "数据预处理这步做得很规范，点赞",
+    "timestamp": "2025-03-20T14:14:30Z",
     "type": "text"
   },
   {
     "id": "msg_20",
     "streamId": "stream_3",
-    "userId": "user_302",
-    "username": "data_hacker",
-    "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "预处理这步做得不错 缺失值处理很规范",
-    "timestamp": "2025-03-20T14:14:30Z",
-    "type": "text"
-  },
-  {
-    "id": "msg_21",
-    "streamId": "stream_3",
     "userId": "user_303",
     "username": "python_fan",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "想看最终准确率能到多少",
+    "content": "期待！想看最终的预测准确率",
     "timestamp": "2025-03-20T14:15:00Z",
     "type": "reaction"
   },
   {
-    "id": "msg_22",
+    "id": "msg_21",
     "streamId": "stream_1",
     "userId": "user_109",
     "username": "react_master",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "这种工作流挺好的 AI生成 -> 人工review -> 微调",
+    "content": "这种 AI 生成代码然后手动调整的工作流效率真的高",
     "timestamp": "2025-03-20T14:15:30Z",
     "type": "text"
   },
   {
-    "id": "msg_23",
+    "id": "msg_22",
     "streamId": "stream_1",
     "userId": "user_110",
     "username": "startup_builder",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "这速度 一下午能出个MVP吧",
+    "content": "请问主播这个项目预计多久能上线？",
     "timestamp": "2025-03-20T14:16:00Z",
     "type": "text"
   },
   {
-    "id": "msg_24",
+    "id": "msg_23",
     "streamId": "stream_2",
     "userId": "user_206",
     "username": "color_theory",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "配色还行 暗色模式打算做吗",
+    "content": "配色方案很舒服，暗色模式也要做吗？",
     "timestamp": "2025-03-20T14:16:30Z",
     "type": "text"
   },
   {
-    "id": "msg_25",
+    "id": "msg_24",
     "streamId": "stream_3",
     "userId": "user_304",
     "username": "algo_nerd",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "这种表格数据试试XGBoost 一般比纯NN好",
+    "content": "建议试试 XGBoost，对这种表格数据效果通常更好",
     "timestamp": "2025-03-20T14:17:00Z",
     "type": "text"
   },
   {
-    "id": "msg_26",
+    "id": "msg_25",
     "streamId": "stream_1",
     "userId": "user_104",
     "username": "ai_enthusiast",
     "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "报错了hhhh 经典的undefined",
+    "content": "刚才那段 API 路由代码，AI 竟然一次就写对了，太强了",
     "timestamp": "2025-03-20T14:17:30Z",
-    "type": "text"
-  },
-  {
-    "id": "msg_27",
-    "streamId": "stream_1",
-    "userId": "user_105",
-    "username": "debug_master",
-    "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "加个?.就好了",
-    "timestamp": "2025-03-20T14:17:40Z",
-    "type": "text"
-  },
-  {
-    "id": "msg_28",
-    "streamId": "stream_1",
-    "userId": "user_108",
-    "username": "newbie_dev",
-    "avatarUrl": "/images/avatars/avatar_default.png",
-    "content": "弹幕帮debug也是没谁了",
-    "timestamp": "2025-03-20T14:17:55Z",
     "type": "text"
   }
 ]
